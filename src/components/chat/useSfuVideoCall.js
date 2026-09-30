@@ -16,7 +16,18 @@ export const useSfuVideoCall = () => {
   const [remoteStreams, setRemoteStreams] = useState(new Map());
 
   const ensureSignaling = useCallback(async () => {
-    if (signalingRef.current) return signalingRef.current;
+    if (signalingRef.current && signalingRef.current.ws?.readyState === WebSocket.OPEN) {
+      return signalingRef.current;
+    }
+
+    if (signalingRef.current) {
+      try {
+        signalingRef.current.disconnect?.();
+      } catch (_) {}
+      signalingRef.current = null;
+    }
+    handlersRegisteredRef.current = false;
+
     const s = new SfuSignalingClient();
     await s.connect();
     signalingRef.current = s;
@@ -24,7 +35,9 @@ export const useSfuVideoCall = () => {
   }, []);
 
   const ensureLocalMedia = useCallback(async () => {
-    if (localStream) return localStream;
+    if (localStream && localStream.active && localStream.getTracks().some(t => t.readyState === "live")) {
+      return localStream;
+    }
     try {
       const s = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -64,9 +77,15 @@ export const useSfuVideoCall = () => {
   };
 
   const createPeer = useCallback((peerId, currentRoomId) => {
-    if (peersRef.current.has(peerId)) {
-      console.log("[SFU] Peer connection already exists for:", peerId);
-      return peersRef.current.get(peerId);
+    const existing = peersRef.current.get(peerId);
+    if (existing) {
+      if (existing.connectionState !== "failed" && existing.connectionState !== "closed") {
+        console.log("[SFU] Active peer connection already exists for:", peerId);
+        return existing;
+      }
+      console.log("[SFU] Evicting stale/failed peer connection for:", peerId);
+      try { existing.close(); } catch (_) {}
+      peersRef.current.delete(peerId);
     }
 
     console.log("[SFU] Creating new peer connection for:", peerId);
@@ -114,8 +133,16 @@ export const useSfuVideoCall = () => {
 
     pc.onconnectionstatechange = () => {
       console.log("[SFU] Connection state:", peerId, pc.connectionState);
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        console.warn("[SFU] Peer connection failed/disconnected:", peerId);
+      if (pc.connectionState === 'failed') {
+        console.warn("[SFU] Peer connection failed, cleaning up:", peerId);
+        try { pc.close(); } catch (_) {}
+        peersRef.current.delete(peerId);
+        candidateQueuesRef.current.delete(peerId);
+        setRemoteStreams((prev) => {
+          const m = new Map(prev);
+          m.delete(peerId);
+          return m;
+        });
       }
     };
 
@@ -295,14 +322,31 @@ export const useSfuVideoCall = () => {
     s.join(rid, name);
   }, [ensureSignaling, registerHandlers, ensureLocalMedia]);
 
-  const leave = () => {
-    peersRef.current.forEach((pc) => pc.close());
+  const leave = useCallback(() => {
+    try {
+      if (signalingRef.current) {
+        if (roomIdRef.current && participantIdRef.current) {
+          signalingRef.current.leave(roomIdRef.current, participantIdRef.current);
+        }
+        signalingRef.current.disconnect?.();
+        signalingRef.current = null;
+      }
+    } catch (e) {
+      console.warn("[SFU] Error during leave signaling:", e);
+    }
+    handlersRegisteredRef.current = false;
+
+    peersRef.current.forEach((pc) => {
+      try { pc.close(); } catch (_) {}
+    });
     peersRef.current.clear();
     candidateQueuesRef.current.clear();
     setRemoteStreams(new Map());
 
     if (localStream) {
-      localStream.getTracks().forEach((t) => t.stop());
+      localStream.getTracks().forEach((t) => {
+        try { t.stop(); } catch (_) {}
+      });
     }
 
     setLocalStream(null);
@@ -310,7 +354,14 @@ export const useSfuVideoCall = () => {
     setParticipantId(null);
     participantIdRef.current = null;
     roomIdRef.current = null;
-  };
+  }, [localStream]);
+
+  // Clean up if component unmounts while in a call
+  useEffect(() => {
+    return () => {
+      leave();
+    };
+  }, [leave]);
 
   const toggleMute = useCallback(() => {
     if (!localStream) return;

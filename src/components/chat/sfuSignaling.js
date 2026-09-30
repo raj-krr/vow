@@ -136,6 +136,21 @@ export default class SfuSignalingClient {
     });
   }
 
+  disconnect() {
+    this.connected = false;
+    if (this.ws) {
+      try {
+        this.ws.onopen = null;
+        this.ws.onmessage = null;
+        this.ws.onerror = null;
+        this.ws.onclose = null;
+        this.ws.close();
+      } catch (_) {}
+      this.ws = null;
+    }
+    this.handlers.clear();
+  }
+
   sendOffer(roomId, from, to, sdp) {
     this.send({
       type: "offer",
