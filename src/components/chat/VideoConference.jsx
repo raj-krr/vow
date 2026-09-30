@@ -27,6 +27,7 @@ const VideoConference = () => {
   const [callTitle, setCallTitle] = useState("");
 
   const [joinInput, setJoinInput] = useState("");
+  const [copied, setCopied] = useState(false);
   const localVideoRef = useRef(null);
   const profile = useSelector((state) => state.user.profile);
 
@@ -40,6 +41,8 @@ const VideoConference = () => {
     toggleMute: toggleMuteHook,
     toggleVideo: toggleVideoHook,
   } = useSfuVideoCall();
+
+  const activeMeetingId = roomId || generatedRoomId || joinInput;
 
   // sync stream with UI
   useEffect(() => {
@@ -289,9 +292,20 @@ const VideoConference = () => {
               </button>
             </div>
 
-            {roomId && (
-              <div className="mt-3 text-center text-white/80 text-sm">
-                Meeting ID: <b>{roomId}</b>
+            {activeMeetingId && (
+              <div className="mt-3 flex items-center justify-center gap-2 text-white/90 text-sm">
+                <span>Meeting ID: <b className="font-mono bg-[#35115A] px-2.5 py-1 rounded text-white tracking-wider select-all">{activeMeetingId}</b></span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(activeMeetingId);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                  className="px-2.5 py-1 rounded bg-[#5E9BFF] hover:bg-[#4A8CE0] text-white text-xs font-semibold transition"
+                >
+                  {copied ? "Copied!" : "Copy ID"}
+                </button>
               </div>
             )}
           </div>

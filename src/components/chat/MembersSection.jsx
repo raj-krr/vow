@@ -319,7 +319,12 @@ const MembersSection = ({ onSelectChannel, onOpenChat, onStartDM, unreadDMs = {}
                   className={`flex items-center justify-between text-white px-4 py-2 ${isActive ? 'bg-[#3A0E70]' : 'bg-[#200539] hover:bg-[#2A0C52]'}`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className="inline-block w-3 h-3 rounded-full bg-[#2DB3FF]"></span>
+                    <span
+                      className={`inline-block w-2.5 h-2.5 rounded-full ${
+                        m.online ? "bg-green-500 shadow-[0_0_6px_#22c55e]" : "bg-gray-400"
+                      }`}
+                      title={m.online ? "Online" : "Offline"}
+                    />
                     <h4 className="text-[#BCBCBC] text-base">{m.fullName || m.username}{isSelf ? ' (You)' : ''}</h4>
                     {unreadCount > 0 && (
                       <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full px-1">

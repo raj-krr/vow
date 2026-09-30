@@ -46,16 +46,26 @@ export const useMembers = (workspaceId) => {
   useEffect(() => {
     connectSocket();
 
-    socket.emit("get_online_users");
+    const requestOnlineUsers = () => {
+      if (socket.connected) {
+        socket.emit("get_online_users");
+      }
+    };
+
+    if (socket.connected) {
+      requestOnlineUsers();
+    }
+    socket.on("connect", requestOnlineUsers);
 
     const handleUserOnline = ({ userId }) => {
       if (userId) {
         onlineSetRef.current.add(String(userId));
       }
       setMembers((prev) =>
-        prev.map((m) =>
-          String(m._id) === String(userId) ? { ...m, online: true } : m
-        )
+        prev.map((m) => {
+          const mid = String(m._id || m.id || m.userId || "");
+          return mid === String(userId) ? { ...m, online: true } : m;
+        })
       );
     };
 
@@ -64,21 +74,28 @@ export const useMembers = (workspaceId) => {
         onlineSetRef.current.delete(String(userId));
       }
       setMembers((prev) =>
-        prev.map((m) =>
-          String(m._id) === String(userId) ? { ...m, online: false } : m
-        )
+        prev.map((m) => {
+          const mid = String(m._id || m.id || m.userId || "");
+          return mid === String(userId) ? { ...m, online: false } : m;
+        })
       );
     };
 
     const handleOnlineList = (userList) => {
       if (Array.isArray(userList)) {
         const set = new Set(userList.map((id) => String(id)));
+        const selfUserId = localStorage.getItem("userId");
+        if (selfUserId) set.add(String(selfUserId));
+
         onlineSetRef.current = set;
         setMembers((prev) =>
-          prev.map((m) => ({
-            ...m,
-            online: set.has(String(m._id)),
-          }))
+          prev.map((m) => {
+            const mid = String(m._id || m.id || m.userId || "");
+            return {
+              ...m,
+              online: set.has(mid),
+            };
+          })
         );
       }
     };
@@ -88,6 +105,7 @@ export const useMembers = (workspaceId) => {
     socket.on("online_users_list", handleOnlineList);
 
     return () => {
+      socket.off("connect", requestOnlineUsers);
       socket.off("user_online", handleUserOnline);
       socket.off("user_offline", handleUserOffline);
       socket.off("online_users_list", handleOnlineList);

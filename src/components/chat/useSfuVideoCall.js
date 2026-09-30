@@ -9,11 +9,17 @@ export const useSfuVideoCall = () => {
   const candidateQueuesRef = useRef(new Map());
   const participantIdRef = useRef(null);
   const roomIdRef = useRef(null);
+  const localStreamRef = useRef(null);
 
   const [roomId, setRoomId] = useState(null);
   const [participantId, setParticipantId] = useState(null);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState(new Map());
+
+  const updateLocalStream = useCallback((stream) => {
+    localStreamRef.current = stream;
+    setLocalStream(stream);
+  }, []);
 
   const ensureSignaling = useCallback(async () => {
     if (signalingRef.current && signalingRef.current.ws?.readyState === WebSocket.OPEN) {
@@ -35,15 +41,16 @@ export const useSfuVideoCall = () => {
   }, []);
 
   const ensureLocalMedia = useCallback(async () => {
-    if (localStream && localStream.active && localStream.getTracks().some(t => t.readyState === "live")) {
-      return localStream;
+    const current = localStreamRef.current;
+    if (current && current.active && current.getTracks().some(t => t.readyState === "live")) {
+      return current;
     }
     try {
       const s = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: true,
       });
-      setLocalStream(s);
+      updateLocalStream(s);
       return s;
     } catch (err) {
       console.warn("[SFU] Could not get audio+video, trying audio only:", err);
@@ -52,16 +59,16 @@ export const useSfuVideoCall = () => {
           audio: true,
           video: false,
         });
-        setLocalStream(audioOnly);
+        updateLocalStream(audioOnly);
         return audioOnly;
       } catch (audioErr) {
         console.warn("[SFU] Could not access camera or microphone, using fallback stream:", audioErr);
         const emptyStream = new MediaStream();
-        setLocalStream(emptyStream);
+        updateLocalStream(emptyStream);
         return emptyStream;
       }
     }
-  }, [localStream]);
+  }, [updateLocalStream]);
 
   const processCandidateQueue = async (peerId, pc) => {
     const queue = candidateQueuesRef.current.get(peerId) || [];
@@ -343,10 +350,11 @@ export const useSfuVideoCall = () => {
     candidateQueuesRef.current.clear();
     setRemoteStreams(new Map());
 
-    if (localStream) {
-      localStream.getTracks().forEach((t) => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => {
         try { t.stop(); } catch (_) {}
       });
+      localStreamRef.current = null;
     }
 
     setLocalStream(null);
@@ -354,14 +362,19 @@ export const useSfuVideoCall = () => {
     setParticipantId(null);
     participantIdRef.current = null;
     roomIdRef.current = null;
-  }, [localStream]);
+  }, []);
 
-  // Clean up if component unmounts while in a call
+  const leaveRef = useRef(leave);
+  useEffect(() => {
+    leaveRef.current = leave;
+  });
+
+  // Clean up ONLY when the component actually unmounts
   useEffect(() => {
     return () => {
-      leave();
+      leaveRef.current();
     };
-  }, [leave]);
+  }, []);
 
   const toggleMute = useCallback(() => {
     if (!localStream) return;
