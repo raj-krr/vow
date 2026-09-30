@@ -93,13 +93,18 @@ export const useSfuVideoCall = () => {
 
     pc.ontrack = (e) => {
       console.log("[SFU] Remote track received from peer:", peerId, "kind:", e.track.kind);
-      const stream = e.streams?.[0] || new MediaStream([e.track]);
-
       setRemoteStreams((prev) => {
         const m = new Map(prev);
-        m.set(peerId, stream);
-        console.log("[SFU] Remote streams updated, total peers:", m.size);
-        return m;
+        let stream = m.get(peerId);
+        if (!stream) {
+          stream = e.streams?.[0] ? e.streams[0] : new MediaStream();
+          m.set(peerId, stream);
+        }
+        if (!stream.getTracks().some((t) => t.id === e.track.id)) {
+          stream.addTrack(e.track);
+        }
+        console.log("[SFU] Remote streams updated, total peers:", m.size, "tracks:", stream.getTracks().map(t => `${t.kind}:${t.enabled}`));
+        return new Map(m);
       });
     };
 
@@ -117,6 +122,17 @@ export const useSfuVideoCall = () => {
     peersRef.current.set(peerId, pc);
     return pc;
   }, []);
+
+  const attachLocalTracks = (pc, media) => {
+    if (!pc || !media) return;
+    const senders = pc.getSenders();
+    media.getTracks().forEach((track) => {
+      const alreadyAdded = senders.some((s) => s.track === track || (s.track && s.track.kind === track.kind));
+      if (!alreadyAdded) {
+        pc.addTrack(track, media);
+      }
+    });
+  };
 
   const registerHandlers = useCallback((s, currentRoomId) => {
     if (handlersRegisteredRef.current) return;
@@ -137,15 +153,13 @@ export const useSfuVideoCall = () => {
 
       const media = await ensureLocalMedia();
 
+      // The newly joining peer initiates offers to all existing participants
       for (const p of msg.data.participants) {
         if (p.id === msg.participantId) continue;
 
         console.log("[SFU] Creating offer for existing participant:", p.id);
         const pc = createPeer(p.id, currentRoomId);
-
-        media.getTracks().forEach((track) => {
-          pc.addTrack(track, media);
-        });
+        attachLocalTracks(pc, media);
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -161,15 +175,10 @@ export const useSfuVideoCall = () => {
 
       const media = await ensureLocalMedia();
       const pc = createPeer(newPeerId, currentRoomId);
+      attachLocalTracks(pc, media);
 
-      media.getTracks().forEach((track) => {
-        pc.addTrack(track, media);
-      });
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      signalingRef.current.sendOffer(currentRoomId, participantIdRef.current, newPeerId, offer);
+      // Existing participants do NOT initiate an offer here to prevent simultaneous offer glare.
+      // They wait for the new joiner's offer to arrive via s.on("offer").
     });
 
     s.on("offer", async (msg) => {
@@ -178,15 +187,23 @@ export const useSfuVideoCall = () => {
 
       const pc = createPeer(from, currentRoomId);
       const media = await ensureLocalMedia();
+      attachLocalTracks(pc, media);
 
-      media.getTracks().forEach((track) => {
-        pc.addTrack(track, media);
-      });
+      // Glare protection: handle simultaneous offer collision
+      if (pc.signalingState !== "stable") {
+        const isPolite = (participantIdRef.current || "") > from;
+        if (!isPolite) {
+          console.warn(`[SFU] Glare detected: impolite peer ignoring colliding offer from ${from}`);
+          return;
+        }
+        console.log(`[SFU] Glare detected: polite peer rolling back local offer for ${from}`);
+        await pc.setLocalDescription({ type: "rollback" });
+      }
 
-      await pc.setRemoteDescription({
+      await pc.setRemoteDescription(new RTCSessionDescription({
         type: msg.data.type,
         sdp: msg.data.sdp
-      });
+      }));
       await processCandidateQueue(from, pc);
 
       const ans = await pc.createAnswer();
@@ -203,12 +220,19 @@ export const useSfuVideoCall = () => {
         return;
       }
 
-      console.log("[SFU] Received answer from peer:", msg.participantId);
+      console.log("[SFU] Received answer from peer:", msg.participantId, "current state:", pc.signalingState);
+
+      // Only apply answer if we are expecting one
+      if (pc.signalingState !== "have-local-offer") {
+        console.warn(`[SFU] Ignoring answer from ${msg.participantId} because signalingState is '${pc.signalingState}' (expected 'have-local-offer')`);
+        return;
+      }
+
       try {
-        await pc.setRemoteDescription({
+        await pc.setRemoteDescription(new RTCSessionDescription({
           type: msg.data.type,
           sdp: msg.data.sdp,
-        });
+        }));
         await processCandidateQueue(msg.participantId, pc);
         console.log("[SFU] Answer applied successfully for peer:", msg.participantId);
       } catch (err) {
