@@ -209,13 +209,23 @@ const VideoConference = () => {
       ) : (
 
        
-        <div ref={callContainerRef} className="h-full bg-[#FEFEFE] flex flex-col">
+        <div ref={callContainerRef} className="h-full w-full bg-[#12111A] flex flex-col min-h-0 overflow-hidden">
 
-          <div className="flex-1 p-4">
-            <div className="grid grid-cols-2 gap-4 h-full">
+          <div className="flex-1 p-2 sm:p-4 overflow-y-auto min-h-0 flex items-center justify-center">
+            <div
+              className={`w-full h-full max-h-full grid gap-2.5 sm:gap-4 auto-rows-fr items-center justify-center ${
+                remoteStreams.size === 0
+                  ? "grid-cols-1 max-w-3xl"
+                  : remoteStreams.size === 1
+                  ? "grid-cols-1 md:grid-cols-2 max-w-5xl"
+                  : remoteStreams.size === 2
+                  ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-w-6xl"
+                  : "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 max-w-7xl"
+              } mx-auto`}
+            >
 
               {/* local video */}
-              <div className="relative bg-gray-800 rounded-xl overflow-hidden">
+              <div className="relative bg-gray-900 rounded-xl overflow-hidden border border-white/10 shadow-lg w-full h-full min-h-[160px] sm:min-h-[200px] max-h-[400px] aspect-video flex items-center justify-center mx-auto">
                 <video
                   ref={localVideoRef}
                   autoPlay
@@ -223,11 +233,15 @@ const VideoConference = () => {
                   playsInline
                   className="w-full h-full object-cover transform scale-x-[-1]"
                 />
+                <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-md flex items-center gap-1.5 z-10 shadow">
+                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                  <span className="font-medium">{profile?.fullName || profile?.username || "You"} (You)</span>
+                </div>
               </div>
 
               {/* remote peers */}
               {Array.from(remoteStreams.entries()).map(([peerId, mediaStream]) => (
-                <div key={peerId} className="relative bg-gray-800 rounded-xl overflow-hidden">
+                <div key={peerId} className="relative bg-gray-900 rounded-xl overflow-hidden border border-white/10 shadow-lg w-full h-full min-h-[160px] sm:min-h-[200px] max-h-[400px] aspect-video flex items-center justify-center mx-auto">
                   <video
                     autoPlay
                     playsInline
@@ -243,18 +257,20 @@ const VideoConference = () => {
                     }}
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute bottom-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
-                    Peer: {peerId.slice(0, 8)}
+                  <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-md flex items-center gap-1.5 z-10 shadow">
+                    <span className="w-2 h-2 rounded-full bg-[#5E9BFF]"></span>
+                    <span className="font-medium">Peer: {peerId.slice(0, 8)}</span>
                   </div>
                 </div>
               ))}
 
               {/* Waiting for peers placeholder */}
               {remoteStreams.size === 0 && (
-                <div className="relative bg-gray-700 rounded-xl overflow-hidden flex items-center justify-center">
-                  <div className="text-white/60 text-center">
-                    <div className="text-2xl mb-2"></div>
-                    <div className="text-sm">Waiting for others to join...</div>
+                <div className="relative bg-gray-900/60 border border-dashed border-white/20 rounded-xl overflow-hidden min-h-[160px] sm:min-h-[200px] max-h-[400px] aspect-video flex items-center justify-center w-full h-full mx-auto">
+                  <div className="text-white/60 text-center p-4">
+                    <div className="text-xl sm:text-2xl mb-1.5">👥</div>
+                    <div className="text-xs sm:text-sm font-medium">Waiting for others to join...</div>
+                    <div className="text-[11px] text-white/40 mt-1">Share the Meeting ID below</div>
                   </div>
                 </div>
               )}
@@ -262,7 +278,7 @@ const VideoConference = () => {
           </div>
 
           {/* bottom controls */}
-          <div className="bg-[#200539] border-t border-[#3D1B5F] px-6 py-3">
+          <div className="bg-[#200539] border-t border-[#3D1B5F] px-4 sm:px-6 py-2.5 sm:py-3 shrink-0">
             <div className="flex items-center justify-center gap-5">
               <button
                 onClick={() => {
