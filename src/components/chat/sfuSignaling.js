@@ -28,9 +28,29 @@ export default class SfuSignalingClient {
 
     base = base.trim();
 
-    if (base.startsWith("https://")) base = base.replace("https://", "wss://");
-    else if (base.startsWith("http://")) base = base.replace("http://", "ws://");
-    else if (!base.startsWith("ws")) base = "ws://" + base;
+    const isHttps =
+      typeof window !== "undefined" && window.location.protocol === "https:";
+
+    if (isHttps) {
+      // Insecure ws:// connections are strictly blocked by browsers on HTTPS pages
+      if (base.startsWith("http://")) {
+        base = base.replace(/^http:\/\//i, "wss://");
+      } else if (base.startsWith("https://")) {
+        base = base.replace(/^https:\/\//i, "wss://");
+      } else if (base.startsWith("ws://")) {
+        base = base.replace(/^ws:\/\//i, "wss://");
+      } else if (!base.startsWith("wss://")) {
+        base = "wss://" + base;
+      }
+    } else {
+      if (base.startsWith("https://")) {
+        base = base.replace(/^https:\/\//i, "wss://");
+      } else if (base.startsWith("http://")) {
+        base = base.replace(/^http:\/\//i, "ws://");
+      } else if (!base.startsWith("ws://") && !base.startsWith("wss://")) {
+        base = "ws://" + base;
+      }
+    }
 
     return base.replace(/\/+$/, "") + "/signaling";
   }

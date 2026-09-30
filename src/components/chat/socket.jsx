@@ -1,6 +1,10 @@
 import { io } from "socket.io-client";
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+let rawSocketUrl = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+if (typeof window !== "undefined" && window.location.protocol === "https:" && rawSocketUrl.startsWith("http://")) {
+  rawSocketUrl = rawSocketUrl.replace(/^http:\/\//i, "https://");
+}
+const SOCKET_URL = rawSocketUrl;
 
 const socket = io(SOCKET_URL, {
   path: "/socket.io",
