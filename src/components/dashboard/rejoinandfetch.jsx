@@ -87,15 +87,26 @@ const RejoinAndFetch = ({ refreshTrigger }) => {
     try {
       setRejoiningId(workspaceId);
       const response = await rejoinWorkspace(workspaceId);
-      // Server refreshes HttpOnly cookie; no need to read token in JS
       const apiName =
         response?.data?.workspace?.workspaceName ||
         response?.data?.workspaceName;
       const resolvedName = apiName || fallbackName || null;
+      const workspaceToken = response?.data?.workspaceToken || null;
+
+      localStorage.setItem("workspaceId", workspaceId);
+      if (response?.data?.workspace?.inviteCode) {
+        localStorage.setItem("inviteCode", response.data.workspace.inviteCode);
+      }
+
+      // Store workspace token for header-based auth (cross-origin production)
+      if (workspaceToken) {
+        localStorage.setItem(`workspaceToken_${workspaceId}`, workspaceToken);
+      }
+
       dispatch(
         setWorkspaceContext({
           workspaceId,
-          workspaceToken: null,
+          workspaceToken,
           workspaceName: resolvedName,
         })
       );

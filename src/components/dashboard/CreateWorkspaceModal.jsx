@@ -59,7 +59,11 @@ const CreateWorkspaceModal = ({ isOpen, onClose, onWorkspaceCreated }) => {
       const managerId = workspace.manager || workspace.managerId || workspace.ownerId || null;
       localStorage.setItem("workspaceId", wsId);
       localStorage.setItem("inviteCode", wsInviteCode);
-      dispatch(setWorkspaceContext({ workspaceId: wsId, workspaceToken: null, workspaceName, workspaceManagerId: managerId }));
+      const wsToken = response.data?.workspaceToken;
+      if (wsToken) {
+        localStorage.setItem(`workspaceToken_${wsId}`, wsToken);
+      }
+      dispatch(setWorkspaceContext({ workspaceId: wsId, workspaceToken: wsToken || null, workspaceName, workspaceManagerId: managerId }));
       setToast({ show: true, type: "success", message: `Workspace created. Invites: ${inviteEmails.length}. Code: ${wsInviteCode}` });
 
       // Notify parent component to refresh workspace list

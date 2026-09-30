@@ -21,6 +21,14 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+
+    const currentWorkspaceId = localStorage.getItem("workspaceId");
+    if (currentWorkspaceId) {
+      const wsToken = localStorage.getItem(`workspaceToken_${currentWorkspaceId}`);
+      if (wsToken) {
+        config.headers["x-workspace-token"] = wsToken;
+      }
+    }
     return config;
   },
   (error) => Promise.reject(error)

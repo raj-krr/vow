@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { useSelector } from "react-redux";
+import { useSelector, useDispatch } from "react-redux";
+import { useParams } from "react-router-dom";
+import { setWorkspaceContext } from "../userslice";
 
 import MessageList from "../chat/message.jsx";
 import Sidebar from "../chat/sidebar.jsx";
@@ -29,10 +31,26 @@ import { useChatSocket } from "./hooks/useChatSocket";
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL;
 
 const Chat = ({ username, roomId, remoteUserId }) => {
-  const workspaceName = useSelector((state) => state.user.workspaceName);
+  const { workspaceId: paramWorkspaceId } = useParams();
+  const dispatch = useDispatch();
+  const reduxWorkspaceName = useSelector((state) => state.user.workspaceName);
   const profile = useSelector((state) => state.user.profile);
-  const userId = useSelector((state) => state.user.userId);
-  const workspaceId = useSelector((state) => state.user.workspaceId);
+  const reduxUserId = useSelector((state) => state.user.userId);
+  const reduxWorkspaceId = useSelector((state) => state.user.workspaceId);
+
+  const workspaceId = paramWorkspaceId || reduxWorkspaceId || localStorage.getItem("workspaceId");
+  const userId = reduxUserId || localStorage.getItem("userId") || profile?._id;
+  const workspaceName = reduxWorkspaceName || localStorage.getItem("workspaceName");
+
+  useEffect(() => {
+    if (workspaceId) {
+      localStorage.setItem("workspaceId", workspaceId);
+      if (!reduxWorkspaceId) {
+        dispatch(setWorkspaceContext({ workspaceId, workspaceName }));
+      }
+    }
+  }, [workspaceId, reduxWorkspaceId, workspaceName, dispatch]);
+
   const { members } = useMembers(workspaceId);
 
   const [showMemberModal, setShowMemberModal] = useState(false);

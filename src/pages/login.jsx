@@ -76,9 +76,17 @@ const Login = () => {
 
       // ✅ FIXED SUCCESS CHECK
       if (res.success) {
-        const { user } = res;
+        const { user, accessToken } = res;
+
+        // Store token for Axios Authorization header (critical for cross-origin production)
+        if (accessToken) {
+          localStorage.setItem("accessToken", accessToken);
+        }
 
         dispatch(setUserId(user._id));
+        if (user?._id) {
+          localStorage.setItem("userId", user._id);
+        }
 
         // Fetch profile
         try {
