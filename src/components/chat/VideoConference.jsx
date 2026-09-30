@@ -9,6 +9,7 @@ import videocam from '../../assets/videocam.svg';
 import leaveMeet from '../../assets/leavemeet.svg';
 import EmojiSelector from './emojipicker.jsx';
 import useSfuVideoCall from './useSfuVideoCall.js';
+import api from '../../api/axiosConfig';
 
 const VideoConference = () => {
   const [isCallActive, setIsCallActive] = useState(false);
@@ -64,13 +65,8 @@ const VideoConference = () => {
   
   const startCall = async () => {
     try {
-      const res = await fetch("https://vow-org.me/videochat/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: callTitle }),
-      });
-
-      const data = await res.json();
+      const res = await api.post("/videochat/start", { name: callTitle });
+      const data = res.data;
       if (!data.roomId) return alert("Failed to create call");
 
       // Saving the real room ID for sharing
@@ -82,7 +78,8 @@ const VideoConference = () => {
 
     } catch (err) {
       console.error("Create call error:", err);
-      alert("Unable to create meeting.");
+      const msg = err?.response?.data?.error || err?.response?.data?.msg || err?.message || "Unable to create meeting.";
+      alert(`Create call failed: ${msg}`);
     }
   };
 
@@ -93,21 +90,17 @@ const VideoConference = () => {
     if (!joinInput.trim()) return alert("Enter meeting ID");
 
     try {
-      const res = await fetch("https://vow-org.me/videochat/join", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roomId: joinInput.trim() }),
-      });
-
-      const data = await res.json();
+      const res = await api.post("/videochat/join", { roomId: joinInput.trim() });
+      const data = res.data;
       if (!data.roomId) return alert("Invalid room ID");
 
       await join(data.roomId, profile?.username || "Me");
       setIsCallActive(true);
 
     } catch (e) {
-      console.error("join call error:", e);
-      alert("Error joining room.");
+      console.error("Join call error:", e);
+      const msg = e?.response?.data?.error || e?.response?.data?.msg || e?.message || "Error joining room.";
+      alert(`Join call failed: ${msg}`);
     }
   };
 

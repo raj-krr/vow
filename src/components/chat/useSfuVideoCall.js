@@ -6,10 +6,12 @@ export const useSfuVideoCall = () => {
   const signalingRef = useRef(null);
   const handlersRegisteredRef = useRef(false);
   const peersRef = useRef(new Map());
+  const candidateQueuesRef = useRef(new Map());
+  const participantIdRef = useRef(null);
+  const roomIdRef = useRef(null);
 
   const [roomId, setRoomId] = useState(null);
   const [participantId, setParticipantId] = useState(null);
-
   const [localStream, setLocalStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState(new Map());
 
@@ -23,17 +25,47 @@ export const useSfuVideoCall = () => {
 
   const ensureLocalMedia = useCallback(async () => {
     if (localStream) return localStream;
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: true,
-    });
-    setLocalStream(s);
-    return s;
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+      setLocalStream(s);
+      return s;
+    } catch (err) {
+      console.warn("[SFU] Could not get audio+video, trying audio only:", err);
+      try {
+        const audioOnly = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        setLocalStream(audioOnly);
+        return audioOnly;
+      } catch (audioErr) {
+        console.warn("[SFU] Could not access camera or microphone, using fallback stream:", audioErr);
+        const emptyStream = new MediaStream();
+        setLocalStream(emptyStream);
+        return emptyStream;
+      }
+    }
   }, [localStream]);
 
-  const createPeer = useCallback((peerId) => {
+  const processCandidateQueue = async (peerId, pc) => {
+    const queue = candidateQueuesRef.current.get(peerId) || [];
+    while (queue.length > 0) {
+      const candidate = queue.shift();
+      try {
+        await pc.addIceCandidate(candidate);
+        console.log("[SFU] Processed queued ICE candidate for peer:", peerId);
+      } catch (err) {
+        console.error("[SFU] Error processing queued candidate:", err);
+      }
+    }
+  };
+
+  const createPeer = useCallback((peerId, currentRoomId) => {
     if (peersRef.current.has(peerId)) {
-      console.log("[SFU] Peer already exists for:", peerId);
+      console.log("[SFU] Peer connection already exists for:", peerId);
       return peersRef.current.get(peerId);
     }
 
@@ -42,32 +74,26 @@ export const useSfuVideoCall = () => {
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" }
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" }
       ],
     });
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) {
+      if (e.candidate && signalingRef.current) {
         console.log("[SFU] Sending ICE candidate to peer:", peerId);
         signalingRef.current.sendIceCandidate(
-          roomId,
-          participantId,
+          currentRoomId || roomIdRef.current,
+          participantIdRef.current,
           peerId,
           e.candidate
         );
-      } else {
-        console.log("[SFU] ICE gathering complete for peer:", peerId);
       }
     };
 
     pc.ontrack = (e) => {
-      console.log("[SFU]  Remote track received from peer:", peerId, "kind:", e.track.kind, "streams:", e.streams.length);
+      console.log("[SFU] Remote track received from peer:", peerId, "kind:", e.track.kind);
       const stream = e.streams?.[0] || new MediaStream([e.track]);
-      
-      // Log track details
-      stream.getTracks().forEach(track => {
-        console.log("[SFU] Track:", track.kind, "enabled:", track.enabled, "readyState:", track.readyState);
-      });
 
       setRemoteStreams((prev) => {
         const m = new Map(prev);
@@ -86,27 +112,21 @@ export const useSfuVideoCall = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         console.warn("[SFU] Peer connection failed/disconnected:", peerId);
       }
-      if (pc.connectionState === 'connected') {
-        console.log("[SFU] Peer connected successfully:", peerId);
-      }
-    };
-
-    pc.onsignalingstatechange = () => {
-      console.log("[SFU] Signaling state:", peerId, pc.signalingState);
     };
 
     peersRef.current.set(peerId, pc);
     return pc;
-  }, [roomId, participantId]);
+  }, []);
 
-  const registerHandlers = useCallback((s) => {
+  const registerHandlers = useCallback((s, currentRoomId) => {
     if (handlersRegisteredRef.current) return;
     handlersRegisteredRef.current = true;
 
     s.on("room-state", async (msg) => {
-      console.log("[HOOK] room-state", msg);
+      console.log("[HOOK] room-state received:", msg);
 
       setParticipantId(msg.participantId);
+      participantIdRef.current = msg.participantId;
       s.participantId = msg.participantId;
 
       s.send({
@@ -116,55 +136,63 @@ export const useSfuVideoCall = () => {
       });
 
       const media = await ensureLocalMedia();
-      console.log("[SFU] Local media tracks:", media.getTracks().map(t => `${t.kind}:${t.enabled}`));
 
       for (const p of msg.data.participants) {
         if (p.id === msg.participantId) continue;
 
         console.log("[SFU] Creating offer for existing participant:", p.id);
-        const pc = createPeer(p.id);
+        const pc = createPeer(p.id, currentRoomId);
 
-        // Add all local tracks to peer connection
         media.getTracks().forEach((track) => {
-          const sender = pc.addTrack(track, media);
-          console.log("[SFU] Added track to peer:", track.kind, "enabled:", track.enabled);
+          pc.addTrack(track, media);
         });
 
         const offer = await pc.createOffer();
-        console.log("[SFU] Offer created for peer:", p.id, "type:", offer.type);
         await pc.setLocalDescription(offer);
 
-        signalingRef.current.sendOffer(msg.roomId, msg.participantId, p.id, offer);
+        signalingRef.current.sendOffer(currentRoomId, msg.participantId, p.id, offer);
       }
+    });
+
+    s.on("participant-joined", async (msg) => {
+      const newPeerId = msg.data?.participant?.id || msg.participantId;
+      console.log("[SFU] New participant joined room:", newPeerId);
+      if (!newPeerId || newPeerId === participantIdRef.current) return;
+
+      const media = await ensureLocalMedia();
+      const pc = createPeer(newPeerId, currentRoomId);
+
+      media.getTracks().forEach((track) => {
+        pc.addTrack(track, media);
+      });
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      signalingRef.current.sendOffer(currentRoomId, participantIdRef.current, newPeerId, offer);
     });
 
     s.on("offer", async (msg) => {
       const from = msg.participantId;
       console.log("[SFU] Received offer from peer:", from);
-      
-      const pc = createPeer(from);
 
+      const pc = createPeer(from, currentRoomId);
       const media = await ensureLocalMedia();
-      console.log("[SFU] Adding local tracks to answer peer connection");
-      
-      // Add all local tracks before setting remote description
+
       media.getTracks().forEach((track) => {
-        const sender = pc.addTrack(track, media);
-        console.log("[SFU] Added track to answer:", track.kind, "enabled:", track.enabled);
+        pc.addTrack(track, media);
       });
 
-      console.log("[SFU] Setting remote description (offer)");
       await pc.setRemoteDescription({
         type: msg.data.type,
         sdp: msg.data.sdp
       });
+      await processCandidateQueue(from, pc);
 
-      console.log("[SFU] Creating answer");
       const ans = await pc.createAnswer();
-      console.log("[SFU] Answer created, type:", ans.type);
       await pc.setLocalDescription(ans);
 
-      signalingRef.current.sendAnswer(msg.roomId, participantId, from, ans);
+      signalingRef.current.sendAnswer(currentRoomId, participantIdRef.current, from, ans);
       console.log("[SFU] Answer sent to peer:", from);
     });
 
@@ -174,45 +202,70 @@ export const useSfuVideoCall = () => {
         console.warn("[SFU] No peer connection found for answer from:", msg.participantId);
         return;
       }
-      
+
       console.log("[SFU] Received answer from peer:", msg.participantId);
-      
       try {
         await pc.setRemoteDescription({
           type: msg.data.type,
           sdp: msg.data.sdp,
         });
+        await processCandidateQueue(msg.participantId, pc);
         console.log("[SFU] Answer applied successfully for peer:", msg.participantId);
       } catch (err) {
-        console.error("[SFU] Error setting remote description (answer):", err, "peer:", msg.participantId);
+        console.error("[SFU] Error setting remote description (answer):", err);
       }
     });
 
     s.on("ice-candidate", async (msg) => {
       const pc = peersRef.current.get(msg.participantId);
-      if (!pc) {
-        console.warn("[SFU] No peer connection found for ICE candidate from:", msg.participantId);
-        return;
-      }
+      const candidateInit = {
+        candidate: msg.data.candidate,
+        sdpMid: msg.data.sdpMid,
+        sdpMLineIndex: msg.data.sdpMLineIndex,
+      };
 
-      try {
-        await pc.addIceCandidate({
-          candidate: msg.data.candidate,
-          sdpMid: msg.data.sdpMid,
-          sdpMLineIndex: msg.data.sdpMLineIndex,
-        });
-        console.log("[SFU] ICE candidate added for peer:", msg.participantId);
-      } catch (err) {
-        console.error("[SFU] Error adding ICE candidate:", err, "peer:", msg.participantId);
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+        try {
+          await pc.addIceCandidate(candidateInit);
+          console.log("[SFU] ICE candidate added directly for peer:", msg.participantId);
+        } catch (err) {
+          console.error("[SFU] Error adding ICE candidate directly:", err);
+        }
+      } else {
+        console.log("[SFU] Queueing ICE candidate for peer:", msg.participantId);
+        if (!candidateQueuesRef.current.has(msg.participantId)) {
+          candidateQueuesRef.current.set(msg.participantId, []);
+        }
+        candidateQueuesRef.current.get(msg.participantId).push(candidateInit);
       }
     });
-  }, [createPeer, ensureLocalMedia, participantId]);
+
+    s.on("participant-left", (msg) => {
+      const leftPeerId = msg.participantId;
+      console.log("[SFU] Participant left:", leftPeerId);
+
+      const pc = peersRef.current.get(leftPeerId);
+      if (pc) {
+        pc.close();
+        peersRef.current.delete(leftPeerId);
+      }
+
+      candidateQueuesRef.current.delete(leftPeerId);
+
+      setRemoteStreams((prev) => {
+        const m = new Map(prev);
+        m.delete(leftPeerId);
+        return m;
+      });
+    });
+  }, [createPeer, ensureLocalMedia]);
 
   const join = useCallback(async (rid, name) => {
     setRoomId(rid);
+    roomIdRef.current = rid;
 
     const s = await ensureSignaling();
-    registerHandlers(s);
+    registerHandlers(s, rid);
 
     await ensureLocalMedia();
     s.join(rid, name);
@@ -221,13 +274,18 @@ export const useSfuVideoCall = () => {
   const leave = () => {
     peersRef.current.forEach((pc) => pc.close());
     peersRef.current.clear();
+    candidateQueuesRef.current.clear();
     setRemoteStreams(new Map());
 
-    if (localStream)
+    if (localStream) {
       localStream.getTracks().forEach((t) => t.stop());
+    }
 
+    setLocalStream(null);
     setRoomId(null);
     setParticipantId(null);
+    participantIdRef.current = null;
+    roomIdRef.current = null;
   };
 
   const toggleMute = useCallback(() => {
@@ -261,3 +319,4 @@ export const useSfuVideoCall = () => {
 };
 
 export default useSfuVideoCall;
+

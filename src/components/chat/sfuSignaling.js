@@ -21,11 +21,12 @@ export default class SfuSignalingClient {
   }
 
   _buildWsUrl() {
-    let base = BASE_URL?.trim();
+    let base =
+      import.meta.env.VITE_SOCKET_URL ||
+      import.meta.env.VITE_API_URL ||
+      (typeof window !== "undefined" ? window.location.origin : "http://localhost:5000");
 
-    if (!base) {
-      throw new Error("VITE_SOCKET_URL is not defined");
-    }
+    base = base.trim();
 
     if (base.startsWith("https://")) base = base.replace("https://", "wss://");
     else if (base.startsWith("http://")) base = base.replace("http://", "ws://");
