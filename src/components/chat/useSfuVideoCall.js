@@ -2,6 +2,39 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import SfuSignalingClient from "./sfuSignaling.js";
 
+// ICE/TURN configuration matching backend — TURN servers are critical for 4+ participants
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443?transport=tcp",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+  ],
+  iceCandidatePoolSize: 10,
+  iceTransportPolicy: "all",
+  bundlePolicy: "max-bundle",
+  rtcpMuxPolicy: "require",
+};
+
+// Max number of ICE restarts before giving up on a peer
+const MAX_ICE_RESTARTS = 3;
+
 export const useSfuVideoCall = () => {
   const signalingRef = useRef(null);
   const handlersRegisteredRef = useRef(false);
@@ -10,6 +43,8 @@ export const useSfuVideoCall = () => {
   const participantIdRef = useRef(null);
   const roomIdRef = useRef(null);
   const localStreamRef = useRef(null);
+  const heartbeatIntervalRef = useRef(null);
+  const iceRestartCountRef = useRef(new Map()); // peerId -> restart count
 
   const [roomId, setRoomId] = useState(null);
   const [participantId, setParticipantId] = useState(null);
@@ -83,6 +118,40 @@ export const useSfuVideoCall = () => {
     }
   };
 
+  // Attempt ICE restart for a given peer
+  const attemptIceRestart = useCallback(async (peerId) => {
+    const restarts = iceRestartCountRef.current.get(peerId) || 0;
+    if (restarts >= MAX_ICE_RESTARTS) {
+      console.warn(`[SFU] Max ICE restarts (${MAX_ICE_RESTARTS}) reached for peer: ${peerId}, giving up`);
+      return;
+    }
+
+    const pc = peersRef.current.get(peerId);
+    if (!pc || pc.signalingState === "closed") {
+      console.warn("[SFU] Cannot ICE restart — peer connection closed for:", peerId);
+      return;
+    }
+
+    iceRestartCountRef.current.set(peerId, restarts + 1);
+    console.log(`[SFU] Attempting ICE restart #${restarts + 1} for peer: ${peerId}`);
+
+    try {
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+
+      if (signalingRef.current) {
+        signalingRef.current.sendOffer(
+          roomIdRef.current,
+          participantIdRef.current,
+          peerId,
+          offer
+        );
+      }
+    } catch (err) {
+      console.error("[SFU] ICE restart failed for peer:", peerId, err);
+    }
+  }, []);
+
   const createPeer = useCallback((peerId, currentRoomId) => {
     const existing = peersRef.current.get(peerId);
     if (existing) {
@@ -97,13 +166,7 @@ export const useSfuVideoCall = () => {
 
     console.log("[SFU] Creating new peer connection for:", peerId);
 
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" }
-      ],
-    });
+    const pc = new RTCPeerConnection(ICE_CONFIG);
 
     pc.onicecandidate = (e) => {
       if (e.candidate && signalingRef.current) {
@@ -136,26 +199,50 @@ export const useSfuVideoCall = () => {
 
     pc.oniceconnectionstatechange = () => {
       console.log("[SFU] ICE connection state:", peerId, pc.iceConnectionState);
+
+      // Attempt ICE restart on disconnection before it fails
+      if (pc.iceConnectionState === "disconnected") {
+        console.log("[SFU] ICE disconnected, scheduling ICE restart for:", peerId);
+        // Wait a moment for possible recovery before triggering restart
+        setTimeout(() => {
+          if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+            attemptIceRestart(peerId);
+          }
+        }, 3000);
+      }
+
+      // Reset restart counter when connection is healthy
+      if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+        iceRestartCountRef.current.set(peerId, 0);
+      }
     };
 
     pc.onconnectionstatechange = () => {
       console.log("[SFU] Connection state:", peerId, pc.connectionState);
-      if (pc.connectionState === 'failed') {
-        console.warn("[SFU] Peer connection failed, cleaning up:", peerId);
-        try { pc.close(); } catch (_) {}
-        peersRef.current.delete(peerId);
-        candidateQueuesRef.current.delete(peerId);
-        setRemoteStreams((prev) => {
-          const m = new Map(prev);
-          m.delete(peerId);
-          return m;
-        });
+      if (pc.connectionState === "failed") {
+        // Attempt ICE restart before cleaning up
+        const restarts = iceRestartCountRef.current.get(peerId) || 0;
+        if (restarts < MAX_ICE_RESTARTS) {
+          console.log("[SFU] Connection failed, attempting ICE restart for:", peerId);
+          attemptIceRestart(peerId);
+        } else {
+          console.warn("[SFU] Peer connection failed after max retries, cleaning up:", peerId);
+          try { pc.close(); } catch (_) {}
+          peersRef.current.delete(peerId);
+          candidateQueuesRef.current.delete(peerId);
+          iceRestartCountRef.current.delete(peerId);
+          setRemoteStreams((prev) => {
+            const m = new Map(prev);
+            m.delete(peerId);
+            return m;
+          });
+        }
       }
     };
 
     peersRef.current.set(peerId, pc);
     return pc;
-  }, []);
+  }, [attemptIceRestart]);
 
   const attachLocalTracks = (pc, media) => {
     if (!pc || !media) return;
@@ -167,6 +254,32 @@ export const useSfuVideoCall = () => {
       }
     });
   };
+
+  // Start heartbeat to keep the connection alive
+  const startHeartbeat = useCallback(() => {
+    // Clear any existing heartbeat
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+    }
+
+    // Send heartbeat every 20 seconds to prevent server-side timeout
+    heartbeatIntervalRef.current = setInterval(() => {
+      if (signalingRef.current && roomIdRef.current && participantIdRef.current) {
+        signalingRef.current.send({
+          type: "heartbeat",
+          roomId: roomIdRef.current,
+          participantId: participantIdRef.current,
+        });
+      }
+    }, 20000);
+  }, []);
+
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+  }, []);
 
   const registerHandlers = useCallback((s, currentRoomId) => {
     if (handlersRegisteredRef.current) return;
@@ -184,6 +297,9 @@ export const useSfuVideoCall = () => {
         roomId: msg.roomId,
         participantId: msg.participantId,
       });
+
+      // Start heartbeat after joining
+      startHeartbeat();
 
       const media = await ensureLocalMedia();
 
@@ -309,6 +425,7 @@ export const useSfuVideoCall = () => {
       }
 
       candidateQueuesRef.current.delete(leftPeerId);
+      iceRestartCountRef.current.delete(leftPeerId);
 
       setRemoteStreams((prev) => {
         const m = new Map(prev);
@@ -316,7 +433,7 @@ export const useSfuVideoCall = () => {
         return m;
       });
     });
-  }, [createPeer, ensureLocalMedia]);
+  }, [createPeer, ensureLocalMedia, startHeartbeat, attemptIceRestart]);
 
   const join = useCallback(async (rid, name) => {
     setRoomId(rid);
@@ -330,6 +447,9 @@ export const useSfuVideoCall = () => {
   }, [ensureSignaling, registerHandlers, ensureLocalMedia]);
 
   const leave = useCallback(() => {
+    // Stop heartbeat
+    stopHeartbeat();
+
     try {
       if (signalingRef.current) {
         if (roomIdRef.current && participantIdRef.current) {
@@ -348,6 +468,7 @@ export const useSfuVideoCall = () => {
     });
     peersRef.current.clear();
     candidateQueuesRef.current.clear();
+    iceRestartCountRef.current.clear();
     setRemoteStreams(new Map());
 
     if (localStreamRef.current) {
@@ -362,7 +483,7 @@ export const useSfuVideoCall = () => {
     setParticipantId(null);
     participantIdRef.current = null;
     roomIdRef.current = null;
-  }, []);
+  }, [stopHeartbeat]);
 
   const leaveRef = useRef(leave);
   useEffect(() => {

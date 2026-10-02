@@ -8,11 +8,21 @@ export default class SfuSignalingClient {
     this.handlers = new Map();
     this.token = token || localStorage.getItem("accessToken");
     this.participantId = null;
+    this._reconnecting = false;
+    this._reconnectAttempts = 0;
+    this._maxReconnectAttempts = 10;
+    this._reconnectBaseDelay = 1000;
+    this._intentionalClose = false;
   }
 
   on(type, fn) {
     if (!this.handlers.has(type)) this.handlers.set(type, new Set());
     this.handlers.get(type).add(fn);
+  }
+
+  off(type, fn) {
+    if (!this.handlers.has(type)) return;
+    this.handlers.get(type).delete(fn);
   }
 
   emit(type, data) {
@@ -61,9 +71,12 @@ export default class SfuSignalingClient {
         const url = this._buildWsUrl();
 
         this.ws = new WebSocket(url);
+        this._intentionalClose = false;
 
         this.ws.onopen = () => {
           this.connected = true;
+          this._reconnecting = false;
+          this._reconnectAttempts = 0;
           console.log("[SFU] Connected");
 
           // send auth if needed
@@ -95,17 +108,63 @@ export default class SfuSignalingClient {
 
         this.ws.onerror = (e) => {
           console.warn("[SFU] ws error", e);
-          reject(e);
+          if (!this.connected) {
+            reject(e);
+          }
         };
 
         this.ws.onclose = () => {
+          const wasConnected = this.connected;
           this.connected = false;
           console.log("[SFU] ws closed");
+
+          // Auto-reconnect if not intentionally closed
+          if (!this._intentionalClose && wasConnected) {
+            this._attemptReconnect();
+          }
         };
       } catch (err) {
         reject(err);
       }
     });
+  }
+
+  _attemptReconnect() {
+    if (this._reconnecting || this._intentionalClose) return;
+    if (this._reconnectAttempts >= this._maxReconnectAttempts) {
+      console.error("[SFU] Max reconnect attempts reached, giving up");
+      return;
+    }
+
+    this._reconnecting = true;
+    this._reconnectAttempts++;
+
+    // Exponential backoff with jitter
+    const delay = Math.min(
+      this._reconnectBaseDelay * Math.pow(2, this._reconnectAttempts - 1) +
+        Math.random() * 500,
+      30000
+    );
+
+    console.log(
+      `[SFU] Reconnecting in ${Math.round(delay)}ms (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})`
+    );
+
+    setTimeout(async () => {
+      try {
+        await this.connect();
+        console.log("[SFU] Reconnected successfully");
+
+        // Re-join the room if we were in one
+        if (this.participantId) {
+          this.emit("reconnected", { participantId: this.participantId });
+        }
+      } catch (err) {
+        console.warn("[SFU] Reconnect attempt failed:", err);
+        this._reconnecting = false;
+        this._attemptReconnect();
+      }
+    }, delay);
   }
 
   send(obj) {
@@ -137,7 +196,9 @@ export default class SfuSignalingClient {
   }
 
   disconnect() {
+    this._intentionalClose = true;
     this.connected = false;
+    this._reconnecting = false;
     if (this.ws) {
       try {
         this.ws.onopen = null;
