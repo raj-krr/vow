@@ -10,7 +10,7 @@ const AvatarLayer = ({ members, localPlayerId, localPosition, avatarSize }) => (
       return (
         <Avatar
           key={member.userId}
-          image={member.avatarUrl}
+          image={member.avatar || member.avatarUrl}
           size={avatarSize}
           name={member.username}
           style={{

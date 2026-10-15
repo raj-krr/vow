@@ -38,9 +38,28 @@ const Chat = ({ username, roomId, remoteUserId }) => {
   const reduxUserId = useSelector((state) => state.user.userId);
   const reduxWorkspaceId = useSelector((state) => state.user.workspaceId);
 
+  const jwtUserId = useMemo(() => {
+    try {
+      const token = localStorage.getItem("accessToken");
+      if (token) {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        return payload._id || payload.id || payload.userId || null;
+      }
+    } catch (e) {}
+    return null;
+  }, []);
+
   const workspaceId = paramWorkspaceId || reduxWorkspaceId || localStorage.getItem("workspaceId");
-  const userId = reduxUserId || localStorage.getItem("userId") || profile?._id;
+  const userId = reduxUserId || profile?._id || profile?.id || localStorage.getItem("userId") || jwtUserId;
   const workspaceName = reduxWorkspaceName || localStorage.getItem("workspaceName");
+
+  useEffect(() => {
+    if (userId) {
+      try {
+        localStorage.setItem("userId", userId);
+      } catch (e) {}
+    }
+  }, [userId]);
 
   useEffect(() => {
     if (workspaceId) {
@@ -327,7 +346,7 @@ const Chat = ({ username, roomId, remoteUserId }) => {
             <MessageList
               messages={displayedMessages}
               username={profile?.username || profile?.fullName || username}
-              currentUserId={profile?._id || profile?.id || localStorage.getItem("userId")}
+              currentUserId={userId}
               hasMore={hasMore}
               onLoadMore={loadMoreMessages}
             />

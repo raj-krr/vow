@@ -37,7 +37,7 @@ const presenceSlice = createSlice({
         newMap[uid] = {
           userId: uid,
           displayName: avatar.displayName || "User",
-          avatar: avatar.avatar || "",
+          avatar: avatar.avatar || state.avatars[uid]?.avatar || "",
           x: posX,
           y: posY,
           targetX: posX,

@@ -13,11 +13,12 @@ export const disconnectMapSocket = () => {
 // --------------------------------------------
 // CLIENT → SERVER
 // --------------------------------------------
-export const joinMapPresence = ({ workspaceId, name, x, y }) => {
+export const joinMapPresence = ({ workspaceId, name, avatar, x, y }) => {
   connectSocket();
   socket.emit("join", {
     workspaceId,
     displayName: name || "User",
+    avatar,
     x,
     y,
   });

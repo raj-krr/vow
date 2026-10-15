@@ -34,18 +34,29 @@ import mapSocket, {
 } from "./mapSocket.jsx";
 
 import AvatarsLayer from "./AvatarsLayer.jsx";
+import { useMembers } from "../useMembers";
 
 const Map = ({ onAvatarCollision }) => {
   const dispatch = useDispatch();
   const userState = useSelector((s) => s.user || {});
   const workspaceId = userState.workspaceId;
+  const { members } = useMembers(workspaceId);
+  const currentUserId = userState.userId || userState.profile?._id || userState.profile?.id || localStorage.getItem("userId");
+  const myMember = (members || []).find(m => String(m._id || m.id || m.userId) === String(currentUserId));
   const username =
     userState.fullName ||
     userState.username ||
     userState.profile?.fullName ||
     userState.profile?.username ||
+    myMember?.fullName ||
+    myMember?.username ||
     "User";
-  const avatar = userState.avatar || userState.profile?.avatar;
+  const avatar =
+    userState.avatar ||
+    userState.profile?.avatar ||
+    localStorage.getItem("avatar") ||
+    myMember?.avatar ||
+    "";
   const { selfId } = useSelector((s) => s.presence || {});
   const userPanningRef = useRef(false);
   // Local avatar state
@@ -145,7 +156,6 @@ const Map = ({ onAvatarCollision }) => {
   // ----------------------------------------------
   // INITIAL MOUNT — Connect Socket + Join
   // ----------------------------------------------
-  const currentUserId = userState.userId || userState.profile?._id || userState.profile?.id;
   const selfIdRef = useRef(currentUserId);
 
   useEffect(() => {
@@ -168,6 +178,7 @@ useEffect(() => {
     joinMapPresence({
       workspaceId,
       name: username || "Anonymous",
+      avatar,
       x: positionRef.current.x,
       y: positionRef.current.y,
     });
@@ -213,7 +224,7 @@ useEffect(() => {
     removeMapListeners();
     mapSocket.off("connect", onConnected);
   };
-}, [workspaceId, username]);
+}, [workspaceId, username, avatar]);
 
 
   // ----------------------------------------------
@@ -238,7 +249,7 @@ useEffect(() => {
     }, 60);
 
     return () => clearInterval(interval);
-  }, [workspaceId]);
+  }, [workspaceId, username, avatar]);
 
   // ----------------------------------------------
   // AVATAR COLLISION DETECTION WITH REMOTE PLAYERS

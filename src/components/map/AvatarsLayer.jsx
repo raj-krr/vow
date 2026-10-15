@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import Avatar from './map assets/avtar';
+import { useMembers } from '../useMembers';
 
 const SPEED_PER_SEC = 10;
 const SNAP_DIST = 8;
 
 const AvatarsLayer = () => {
   const { avatars, selfId } = useSelector(state => state.presence);
+  const workspaceId = useSelector(state => state.user?.workspaceId || state.presence?.workspaceId);
+  const { members } = useMembers(workspaceId);
   const [renderVersion, setRenderVersion] = useState(0);
   const interpRef = useRef({});
   const domRefs = useRef({});
@@ -90,7 +93,11 @@ const AvatarsLayer = () => {
       {remoteUsers.map(a => {
         const posX = interpRef.current[a.userId]?.x ?? a.x ?? 60;
         const posY = interpRef.current[a.userId]?.y ?? a.y ?? 60;
-        const username = a.displayName || "User";
+        const member = (members || []).find(
+          m => String(m._id || m.id || m.userId) === String(a.userId)
+        );
+        const avatarImage = a.avatar || member?.avatar || "";
+        const username = a.displayName || member?.fullName || member?.username || "User";
 
         return (
           <div
@@ -107,7 +114,7 @@ const AvatarsLayer = () => {
           >
             {/* Remote Avatar */}
             <div className="relative group cursor-pointer pointer-events-auto flex flex-col items-center">
-              <Avatar size={60} image={a.avatar} name={username} />
+              <Avatar size={60} image={avatarImage} name={username} />
               <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-[#200539] rounded-full shadow-md z-10" />
             </div>
 

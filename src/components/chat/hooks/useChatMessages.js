@@ -33,6 +33,20 @@ export const useChatMessages = ({
           (typeof activeRoomId === "string" && activeRoomId.startsWith("dm-"));
 
         if (isDM) {
+          // Resolve targetDmId from activeRoomId first (most authoritative) then dmReceiverId
+          const targetDmId =
+            typeof activeRoomId === "string" && activeRoomId.startsWith("dm-")
+              ? activeRoomId.replace("dm-", "")
+              : dmReceiverId;
+
+          if (!targetDmId || targetDmId === "undefined" || targetDmId === "null") {
+            if (isSubscribed) {
+              setMessages([]);
+              setLoadingMessages(false);
+            }
+            return;
+          }
+
           // Resolve selfId — use Redux userId FIRST, then profile, then localStorage, then JWT
           let selfId =
             userId ||
@@ -52,22 +66,17 @@ export const useChatMessages = ({
             }
           }
 
-          // Resolve targetDmId
-          let targetDmId = dmReceiverId;
-          if (!targetDmId && typeof activeRoomId === "string" && activeRoomId.startsWith("dm-")) {
-            targetDmId = activeRoomId.replace("dm-", "");
+          // Fallback to "me" so server resolves the caller via verified JWT token
+          if (!selfId) {
+            selfId = "me";
+          }
+
+          // Use cached messages if available to prevent UI flashing
+          if (dmCacheRef.current[targetDmId]?.length) {
+            setMessages(dmCacheRef.current[targetDmId]);
           }
 
           console.log("[useChatMessages] DM fetch:", { selfId, targetDmId, workspaceId });
-
-          if (!targetDmId || !selfId) {
-            console.warn("[useChatMessages] Cannot fetch DMs: missing selfId or targetDmId");
-            if (isSubscribed) {
-              setMessages([]);
-              setLoadingMessages(false);
-            }
-            return;
-          }
 
           const response = await getDirectMessages(
             workspaceId,

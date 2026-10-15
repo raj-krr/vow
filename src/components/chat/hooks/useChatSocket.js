@@ -40,10 +40,10 @@ export const useChatSocket = ({
       const senderId = typeof msg.sender === "object" ? (msg.sender._id || msg.sender.id) : msg.sender;
       const receiverId = typeof msg.receiver === "object" ? (msg.receiver._id || msg.receiver.id) : msg.receiver;
 
-      let currentTargetDmId = dmReceiverId;
-      if (!currentTargetDmId && typeof activeRoomId === "string" && activeRoomId.startsWith("dm-")) {
-        currentTargetDmId = activeRoomId.replace("dm-", "");
-      }
+      const currentTargetDmId =
+        typeof activeRoomId === "string" && activeRoomId.startsWith("dm-")
+          ? activeRoomId.replace("dm-", "")
+          : dmReceiverId;
 
       const isCurrentDMChat = isDM && currentTargetDmId && (String(senderId) === String(currentTargetDmId) || String(receiverId) === String(currentTargetDmId));
 
