@@ -75,19 +75,53 @@ const VideoTile = React.memo(function VideoTile({
   tileStyle,
 }) {
   const videoRef = useRef(null);
+  const [trackCount, setTrackCount] = useState(0);
+
+  // Listen to track changes (add/remove/mute/unmute) so video state stays reactive
+  useEffect(() => {
+    if (!stream) return;
+    const handleTrackChange = () => {
+      setTrackCount((c) => c + 1);
+    };
+    stream.addEventListener('addtrack', handleTrackChange);
+    stream.addEventListener('removetrack', handleTrackChange);
+    stream.getVideoTracks().forEach((track) => {
+      track.addEventListener('mute', handleTrackChange);
+      track.addEventListener('unmute', handleTrackChange);
+      track.addEventListener('ended', handleTrackChange);
+    });
+
+    return () => {
+      stream.removeEventListener('addtrack', handleTrackChange);
+      stream.removeEventListener('removetrack', handleTrackChange);
+      stream.getVideoTracks().forEach((track) => {
+        track.removeEventListener('mute', handleTrackChange);
+        track.removeEventListener('unmute', handleTrackChange);
+        track.removeEventListener('ended', handleTrackChange);
+      });
+    };
+  }, [stream]);
 
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
     if (el.srcObject !== stream) {
       el.srcObject = stream || null;
-      if (stream) {
-        el.play().catch(() => {});
-      }
     }
-  }, [stream]);
+    if (stream) {
+      el.play().catch(() => {
+        // Fall back to muted playback if browser autoplay policy blocks unmuted video
+        if (!isSelf) {
+          el.muted = true;
+          el.play().catch(() => {});
+        }
+      });
+    }
+  }, [stream, trackCount, isSelf]);
 
-  const hasVideo = stream && stream.getVideoTracks().some(t => t.enabled && t.readyState === 'live');
+  const hasVideo = Boolean(
+    stream && stream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live')
+  );
 
   return (
     <div
@@ -360,12 +394,12 @@ const VideoConference = ({
     if (autoStart && initialRoomId && !autoStartedRef.current) {
       autoStartedRef.current = true;
       hadRemotePeerRef.current = false;
-      setIsVideoOff(true);
+      setIsVideoOff(false);
       setIsCallActive(true);
       setGeneratedRoomId(initialRoomId);
       const myName = profile?.fullName || profile?.username || localStorage.getItem("username") || "Me";
-      console.log("[VideoConference] Auto-joining collision audio call:", initialRoomId, "as", myName);
-      join(initialRoomId, myName, { audioOnly: true })
+      console.log("[VideoConference] Auto-joining collision call:", initialRoomId, "as", myName);
+      join(initialRoomId, myName)
         .catch((err) => {
           console.error("[VideoConference] Auto-join failed:", err);
         });
@@ -941,6 +975,7 @@ const VideoConference = ({
                       <VideoTile
                         key={pinned.id}
                         stream={pinned.stream}
+                        avatar={pinned.avatar}
                         label={pinned.label}
                         isSelf={pinned.isSelf}
                         isMuted={pinned.isSelf ? isMuted : false}
@@ -958,6 +993,7 @@ const VideoConference = ({
                     <VideoTile
                       key={tile.id}
                       stream={tile.stream}
+                      avatar={tile.avatar}
                       label={tile.label}
                       isSelf={tile.isSelf}
                       isMuted={tile.isSelf ? isMuted : false}

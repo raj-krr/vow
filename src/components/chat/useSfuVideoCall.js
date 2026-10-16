@@ -25,6 +25,12 @@ const ICE_CONFIG = {
       username: "openrelayproject",
       credential: "openrelayproject",
     },
+    {
+      urls: "turns:openrelay.metered.ca:443?transport=tcp",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+    { urls: "stun:stun.cloudflare.com:3478" },
   ],
   iceCandidatePoolSize: 10,
   iceTransportPolicy: "all",
@@ -210,16 +216,34 @@ export const useSfuVideoCall = () => {
       console.log("[SFU] Remote track received from peer:", peerId, "kind:", e.track.kind);
       setRemoteStreams((prev) => {
         const m = new Map(prev);
-        let stream = m.get(peerId);
-        if (!stream) {
-          stream = e.streams?.[0] ? e.streams[0] : new MediaStream();
-          m.set(peerId, stream);
+        const existing = m.get(peerId);
+        let tracks = existing ? [...existing.getTracks()] : [];
+        if (e.streams?.[0]) {
+          e.streams[0].getTracks().forEach((t) => {
+            if (!tracks.some((tr) => tr.id === t.id)) {
+              tracks.push(t);
+            }
+          });
         }
-        if (!stream.getTracks().some((t) => t.id === e.track.id)) {
-          stream.addTrack(e.track);
+        if (!tracks.some((t) => t.id === e.track.id)) {
+          tracks.push(e.track);
         }
-        console.log("[SFU] Remote streams updated, total peers:", m.size, "tracks:", stream.getTracks().map(t => `${t.kind}:${t.enabled}`));
-        return new Map(m);
+        const freshStream = new MediaStream(tracks);
+        m.set(peerId, freshStream);
+        console.log("[SFU] Remote streams updated, total peers:", m.size, "tracks:", tracks.map(t => `${t.kind}:${t.enabled}`));
+        return m;
+      });
+    };
+
+    pc.onremovetrack = (e) => {
+      console.log("[SFU] Remote track removed from peer:", peerId, "kind:", e.track?.kind);
+      setRemoteStreams((prev) => {
+        const m = new Map(prev);
+        const existing = m.get(peerId);
+        if (!existing) return m;
+        const tracks = existing.getTracks().filter((t) => t.id !== e.track?.id);
+        m.set(peerId, new MediaStream(tracks));
+        return m;
       });
     };
 
