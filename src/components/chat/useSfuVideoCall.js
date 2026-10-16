@@ -45,6 +45,7 @@ export const useSfuVideoCall = () => {
   const localStreamRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
   const iceRestartCountRef = useRef(new Map()); // peerId -> restart count
+  const isAudioOnlyCallRef = useRef(false);
 
   const [roomId, setRoomId] = useState(null);
   const [participantId, setParticipantId] = useState(null);
@@ -54,6 +55,11 @@ export const useSfuVideoCall = () => {
   const updateLocalStream = useCallback((stream) => {
     localStreamRef.current = stream;
     setLocalStream(stream);
+    if (stream) {
+      peersRef.current.forEach((pc) => {
+        attachLocalTracks(pc, stream);
+      });
+    }
   }, []);
 
   const ensureSignaling = useCallback(async () => {
@@ -75,29 +81,49 @@ export const useSfuVideoCall = () => {
     return s;
   }, []);
 
-  const ensureLocalMedia = useCallback(async () => {
+  const ensureLocalMedia = useCallback(async (options = {}) => {
+    const audioOnly = options.audioOnly ?? isAudioOnlyCallRef.current;
     const current = localStreamRef.current;
     if (current && current.active && current.getTracks().some(t => t.readyState === "live")) {
-      return current;
+      const hasAudio = current.getAudioTracks().some(t => t.readyState === "live");
+      const hasVideo = current.getVideoTracks().some(t => t.readyState === "live");
+      if (audioOnly && hasAudio) {
+        return current;
+      }
+      if (!audioOnly && hasAudio && hasVideo) {
+        return current;
+      }
     }
+
     try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: true,
-      });
-      updateLocalStream(s);
-      return s;
-    } catch (err) {
-      console.warn("[SFU] Could not get audio+video, trying audio only:", err);
-      try {
-        const audioOnly = await navigator.mediaDevices.getUserMedia({
+      if (audioOnly) {
+        console.log("[SFU] Acquiring audio-only stream (fast initial audio call)...");
+        const s = await navigator.mediaDevices.getUserMedia({
           audio: true,
           video: false,
         });
-        updateLocalStream(audioOnly);
-        return audioOnly;
+        updateLocalStream(s);
+        return s;
+      } else {
+        console.log("[SFU] Acquiring audio + video stream...");
+        const s = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: true,
+        });
+        updateLocalStream(s);
+        return s;
+      }
+    } catch (err) {
+      console.warn("[SFU] Could not get media (audioOnly=" + audioOnly + "):", err);
+      try {
+        const audioFallback = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        updateLocalStream(audioFallback);
+        return audioFallback;
       } catch (audioErr) {
-        console.warn("[SFU] Could not access camera or microphone, using fallback stream:", audioErr);
+        console.warn("[SFU] Could not access microphone or camera, using fallback stream:", audioErr);
         const emptyStream = new MediaStream();
         updateLocalStream(emptyStream);
         return emptyStream;
@@ -435,15 +461,23 @@ export const useSfuVideoCall = () => {
     });
   }, [createPeer, ensureLocalMedia, startHeartbeat, attemptIceRestart]);
 
-  const join = useCallback(async (rid, name) => {
+  const join = useCallback(async (rid, name, options = {}) => {
+    const { audioOnly = false } = options;
+    isAudioOnlyCallRef.current = audioOnly;
+
     setRoomId(rid);
     roomIdRef.current = rid;
 
     const s = await ensureSignaling();
     registerHandlers(s, rid);
 
-    await ensureLocalMedia();
+    // Join signaling room immediately so server & remote peers acknowledge entry instantly
     s.join(rid, name);
+
+    // Concurrently acquire local media tracks
+    ensureLocalMedia({ audioOnly }).catch((e) => {
+      console.warn("[SFU] Error acquiring media on join:", e);
+    });
   }, [ensureSignaling, registerHandlers, ensureLocalMedia]);
 
   const leave = useCallback(() => {
@@ -498,22 +532,68 @@ export const useSfuVideoCall = () => {
   }, []);
 
   const toggleMute = useCallback(() => {
-    if (!localStream) return;
-    const audioTrack = localStream.getAudioTracks()[0];
+    const stream = localStreamRef.current;
+    if (!stream) return false;
+    const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack) {
       audioTrack.enabled = !audioTrack.enabled;
       console.log("[SFU] Audio track enabled:", audioTrack.enabled);
+      setLocalStream(new MediaStream(stream.getTracks()));
+      return !audioTrack.enabled; // returns true if now muted
     }
-  }, [localStream]);
+    return false;
+  }, []);
 
-  const toggleVideo = useCallback(() => {
-    if (!localStream) return;
-    const videoTrack = localStream.getVideoTracks()[0];
+  const toggleVideo = useCallback(async () => {
+    const stream = localStreamRef.current;
+    if (!stream) return false;
+
+    const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.enabled = !videoTrack.enabled;
-      console.log("[SFU] Video track enabled:", videoTrack.enabled);
+      console.log("[SFU] Video track toggled, enabled:", videoTrack.enabled);
+      setLocalStream(new MediaStream(stream.getTracks()));
+      return videoTrack.enabled; // returns true if video is active
+    } else {
+      // Dynamic camera track acquisition when user switches from audio-only to video
+      try {
+        console.log("[SFU] Requesting camera track dynamically...");
+        const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const newTrack = camStream.getVideoTracks()[0];
+        if (newTrack) {
+          stream.addTrack(newTrack);
+          isAudioOnlyCallRef.current = false;
+
+          // Attach track to all existing RTCPeerConnections and renegotiate
+          for (const [peerId, pc] of peersRef.current.entries()) {
+            try {
+              pc.addTrack(newTrack, stream);
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              if (signalingRef.current && roomIdRef.current && participantIdRef.current) {
+                signalingRef.current.sendOffer(
+                  roomIdRef.current,
+                  participantIdRef.current,
+                  peerId,
+                  offer
+                );
+              }
+              console.log("[SFU] Sent renegotiated offer with video to peer:", peerId);
+            } catch (err) {
+              console.warn("[SFU] Failed adding video track to peer:", peerId, err);
+            }
+          }
+
+          setLocalStream(new MediaStream(stream.getTracks()));
+          return true;
+        }
+      } catch (camErr) {
+        console.error("[SFU] Could not enable camera:", camErr);
+        return false;
+      }
     }
-  }, [localStream]);
+    return false;
+  }, []);
 
   return {
     roomId,

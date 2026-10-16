@@ -25,11 +25,12 @@ const presenceSlice = createSlice({
     replaceAvatars(state, action) {
       const list = action.payload || [];
       const newMap = {};
+      const currentSelfId = state.selfId || (typeof localStorage !== 'undefined' ? localStorage.getItem('userId') : null);
 
       list.forEach(avatar => {
         if (!avatar || !avatar.userId) return;
         const uid = String(avatar.userId);
-        if (state.selfId && uid === String(state.selfId)) return;
+        if (currentSelfId && uid === String(currentSelfId)) return;
 
         const posX = typeof avatar.x === 'number' && !isNaN(avatar.x) ? avatar.x : 60;
         const posY = typeof avatar.y === 'number' && !isNaN(avatar.y) ? avatar.y : 60;
@@ -53,7 +54,8 @@ const presenceSlice = createSlice({
       const a = action.payload;
       if (!a || !a.userId) return;
       const uid = String(a.userId);
-      if (state.selfId && uid === String(state.selfId)) return;
+      const currentSelfId = state.selfId || (typeof localStorage !== 'undefined' ? localStorage.getItem('userId') : null);
+      if (currentSelfId && uid === String(currentSelfId)) return;
 
       const existing = state.avatars[uid];
       const posX = typeof a.x === 'number' && !isNaN(a.x) ? a.x : existing?.x ?? 60;
@@ -75,13 +77,16 @@ const presenceSlice = createSlice({
       const { userId, x, y, displayName, avatar: avatarUrl } = action.payload || {};
       if (!userId) return;
       const uid = String(userId);
-      if (state.selfId && uid === String(state.selfId)) return;
+      const currentSelfId = state.selfId || (typeof localStorage !== 'undefined' ? localStorage.getItem('userId') : null);
+      if (currentSelfId && uid === String(currentSelfId)) return;
 
       const posX = typeof x === 'number' && !isNaN(x) ? x : 60;
       const posY = typeof y === 'number' && !isNaN(y) ? y : 60;
 
       const avatar = state.avatars[uid];
       if (avatar) {
+        avatar.x = posX;
+        avatar.y = posY;
         avatar.targetX = posX;
         avatar.targetY = posY;
         if (displayName) avatar.displayName = displayName;

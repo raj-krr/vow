@@ -16,9 +16,17 @@ import api from '../../api/axiosConfig';
    Given total tile count and container size, returns optimal
    columns, rows, and tile dimensions that maximize tile area.
    ────────────────────────────────────────────────────────── */
-function calcGridLayout(count, containerW, containerH, gap = 8) {
+function calcGridLayout(count, containerW, containerH, gap = 12) {
   if (count <= 0 || containerW <= 0 || containerH <= 0) {
     return { cols: 1, rows: 1, tileW: containerW, tileH: containerH };
+  }
+
+  // Optimized layout for exactly 2 participants: side-by-side or stacked
+  if (count === 2) {
+    const isLandscape = containerW >= containerH * 0.85;
+    return isLandscape
+      ? { cols: 2, rows: 1, tileW: Math.floor((containerW - gap) / 2), tileH: containerH }
+      : { cols: 1, rows: 2, tileW: containerW, tileH: Math.floor((containerH - gap) / 2) };
   }
 
   let bestCols = 1;
@@ -57,6 +65,7 @@ function calcGridLayout(count, containerW, containerH, gap = 8) {
    ────────────────────────────────────────────────────────── */
 const VideoTile = React.memo(function VideoTile({
   stream,
+  avatar,
   label,
   isSelf,
   isMuted,
@@ -101,12 +110,42 @@ const VideoTile = React.memo(function VideoTile({
         }}
       />
 
+      {/* Remote audio guarantee: plays through speakers even when video is off */}
+      {!isSelf && stream && (
+        <audio
+          autoPlay
+          playsInline
+          ref={(audioEl) => {
+            if (audioEl && audioEl.srcObject !== stream) {
+              audioEl.srcObject = stream;
+              audioEl.play?.().catch((err) => console.log("[SFU Remote Audio]", err));
+            }
+          }}
+        />
+      )}
+
       {/* Avatar placeholder when video is off */}
       {(!hasVideo || isVideoOff) && (
         <div className="video-tile-avatar">
-          <div className="video-tile-avatar-circle">
-            {label.charAt(0).toUpperCase()}
-          </div>
+          {avatar ? (
+            <img
+              src={avatar}
+              alt={label}
+              className="video-tile-avatar-img"
+              style={{
+                width: 80,
+                height: 80,
+                borderRadius: '50%',
+                objectFit: 'cover',
+                boxShadow: '0 0 24px rgba(124, 58, 237, 0.45)',
+                border: '2px solid rgba(255,255,255,0.2)',
+              }}
+            />
+          ) : (
+            <div className="video-tile-avatar-circle">
+              {label ? label.charAt(0).toUpperCase() : '?'}
+            </div>
+          )}
         </div>
       )}
 
@@ -139,10 +178,16 @@ const VideoTile = React.memo(function VideoTile({
 /* ──────────────────────────────────────────────────────────
    Main VideoConference Component
    ────────────────────────────────────────────────────────── */
-const VideoConference = () => {
+const VideoConference = ({
+  initialRoomId = null,
+  autoStart = false,
+  callPartnerName = null,
+  callPartnerAvatar = null,
+  onLeaveCall = null,
+}) => {
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(autoStart);
   const [stream, setStream] = useState(null);
   const [lastEmoji, setLastEmoji] = useState(null);
   const reactionTimeoutRef = useRef(null);
@@ -220,22 +265,35 @@ const VideoConference = () => {
     tiles.push({
       id: 'self',
       stream: stream,
+      avatar: profile?.avatar || localStorage.getItem("avatar") || "",
       label: profile?.fullName || profile?.username || 'You',
       isSelf: true,
     });
 
     // Add remotes
-    for (const [peerId, mediaStream] of remoteStreams.entries()) {
+    if (remoteStreams.size > 0) {
+      for (const [peerId, mediaStream] of remoteStreams.entries()) {
+        tiles.push({
+          id: (callPartnerName && remoteStreams.size === 1) ? 'remote-partner' : peerId,
+          stream: mediaStream,
+          avatar: callPartnerAvatar || "",
+          label: (remoteStreams.size === 1 && callPartnerName) ? callPartnerName : `Peer ${peerId.slice(0, 6)}`,
+          isSelf: false,
+        });
+      }
+    } else if (callPartnerName) {
+      // In direct collision call, immediately render the 2nd panel cleanly
       tiles.push({
-        id: peerId,
-        stream: mediaStream,
-        label: `Peer ${peerId.slice(0, 6)}`,
+        id: 'remote-partner',
+        stream: null,
+        avatar: callPartnerAvatar || "",
+        label: callPartnerName,
         isSelf: false,
       });
     }
 
     return tiles;
-  }, [stream, remoteStreams, profile]);
+  }, [stream, remoteStreams, profile, callPartnerName, callPartnerAvatar]);
 
   // Calculate grid layout
   const totalTiles = pinnedPeerId
@@ -289,14 +347,55 @@ const VideoConference = () => {
     }
   };
 
-  const endCall = () => {
+  // Auto-start direct collision call (starts as audio call first)
+  const autoStartedRef = useRef(false);
+  const hadRemotePeerRef = useRef(false);
+
+  useEffect(() => {
+    hadRemotePeerRef.current = false;
+    autoStartedRef.current = false;
+  }, [initialRoomId]);
+
+  useEffect(() => {
+    if (autoStart && initialRoomId && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      hadRemotePeerRef.current = false;
+      setIsVideoOff(true);
+      setIsCallActive(true);
+      setGeneratedRoomId(initialRoomId);
+      const myName = profile?.fullName || profile?.username || localStorage.getItem("username") || "Me";
+      console.log("[VideoConference] Auto-joining collision audio call:", initialRoomId, "as", myName);
+      join(initialRoomId, myName, { audioOnly: true })
+        .catch((err) => {
+          console.error("[VideoConference] Auto-join failed:", err);
+        });
+    }
+  }, [autoStart, initialRoomId, join, profile]);
+
+  const endCall = useCallback(() => {
     leave();
     setIsCallActive(false);
+    setIsVideoOff(false);
+    setIsMuted(false);
     setGeneratedRoomId("");
     setCallTitle("");
     setJoinInput("");
     setPinnedPeerId(null);
-  };
+    autoStartedRef.current = false;
+    hadRemotePeerRef.current = false;
+    onLeaveCall?.();
+  }, [leave, onLeaveCall]);
+
+  // For direct collision calls: when remote peer leaves, automatically end the call on this end too
+  useEffect(() => {
+    if (remoteStreams.size > 0) {
+      hadRemotePeerRef.current = true;
+    } else if (hadRemotePeerRef.current && (autoStart || callPartnerName) && isCallActive) {
+      console.log("[VideoConference] 📴 Remote peer left direct call. Auto-ending meet.");
+      hadRemotePeerRef.current = false;
+      endCall();
+    }
+  }, [remoteStreams.size, autoStart, callPartnerName, isCallActive, endCall]);
 
   const handlePin = useCallback((id) => {
     setPinnedPeerId(prev => prev === id ? null : id);
@@ -731,63 +830,91 @@ const VideoConference = () => {
 
       {/* BEFORE CALL */}
       {!isCallActive ? (
-        <div className="vc-precall">
-          <div className="vc-precall-scroll">
-
-            {/* START A NEW CALL */}
-            <div className="vc-card">
-              <div className="vc-card-icon">
-                <img src={Play} alt="Start Call" />
-              </div>
-              <div>
-                <h3 className="vc-card-title">Start a New Call</h3>
-                <p className="vc-card-subtitle">Instantly create a video conference.</p>
-              </div>
-              <div className="vc-card-input-wrap">
-                <img src={KeyIcon} className="left" alt="" />
-                <input
-                  value={generatedRoomId ? generatedRoomId : callTitle}
-                  onChange={(e) => setCallTitle(e.target.value)}
-                  type="text"
-                  placeholder="Enter title of the call"
-                  className="vc-card-input"
-                />
-                <img src={textFields} className="right" alt="" />
-              </div>
-              <button onClick={startCall} className="vc-card-btn">
-                Start Call
-              </button>
-            </div>
-
-            {/* JOIN EXISTING CALL */}
-            <div className="vc-card">
-              <div className="vc-card-icon">
-                <img src={Link} alt="Join Call" />
-              </div>
-              <div>
-                <h3 className="vc-card-title">Join a Call</h3>
-                <p className="vc-card-subtitle">Enter a meeting ID or paste a link.</p>
-              </div>
-              <div className="vc-card-input-wrap">
-                <img src={textFields} className="left" alt="" />
-                <input
-                  value={joinInput}
-                  onChange={(e) => setJoinInput(e.target.value)}
-                  type="text"
-                  placeholder="Enter meeting ID"
-                  className="vc-card-input"
-                />
-              </div>
-              <button onClick={joinCall} className="vc-card-btn">
-                Join Now
+        autoStart && initialRoomId ? (
+          <div className="vc-precall flex items-center justify-center p-8 min-h-[400px]">
+            <div className="flex flex-col items-center gap-4 text-center p-8 bg-[#200539] border border-[#5C0EA4] rounded-2xl shadow-2xl text-white max-w-md w-full">
+              <div className="w-14 h-14 rounded-full border-4 border-[#5E9BFF] border-t-transparent animate-spin mb-2" />
+              <h3 className="text-xl font-bold text-white">
+                Connecting Call with {callPartnerName || "Member"}
+              </h3>
+              <p className="text-sm text-[#AC92CB]">
+                Room: <span className="font-mono text-white/80">{initialRoomId}</span>
+              </p>
+              <button
+                onClick={endCall}
+                className="mt-4 px-6 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-medium transition cursor-pointer shadow-lg"
+              >
+                Cancel Call
               </button>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="vc-precall">
+            <div className="vc-precall-scroll">
+
+              {/* START A NEW CALL */}
+              <div className="vc-card">
+                <div className="vc-card-icon">
+                  <img src={Play} alt="Start Call" />
+                </div>
+                <div>
+                  <h3 className="vc-card-title">Start a New Call</h3>
+                  <p className="vc-card-subtitle">Instantly create a video conference.</p>
+                </div>
+                <div className="vc-card-input-wrap">
+                  <img src={KeyIcon} className="left" alt="" />
+                  <input
+                    value={generatedRoomId ? generatedRoomId : callTitle}
+                    onChange={(e) => setCallTitle(e.target.value)}
+                    type="text"
+                    placeholder="Enter title of the call"
+                    className="vc-card-input"
+                  />
+                  <img src={textFields} className="right" alt="" />
+                </div>
+                <button onClick={startCall} className="vc-card-btn">
+                  Start Call
+                </button>
+              </div>
+
+              {/* JOIN EXISTING CALL */}
+              <div className="vc-card">
+                <div className="vc-card-icon">
+                  <img src={Link} alt="Join Call" />
+                </div>
+                <div>
+                  <h3 className="vc-card-title">Join a Call</h3>
+                  <p className="vc-card-subtitle">Enter a meeting ID or paste a link.</p>
+                </div>
+                <div className="vc-card-input-wrap">
+                  <img src={textFields} className="left" alt="" />
+                  <input
+                    value={joinInput}
+                    onChange={(e) => setJoinInput(e.target.value)}
+                    type="text"
+                    placeholder="Enter meeting ID"
+                    className="vc-card-input"
+                  />
+                </div>
+                <button onClick={joinCall} className="vc-card-btn">
+                  Join Now
+                </button>
+              </div>
+            </div>
+          </div>
+        )
       ) : (
 
         /* ──── IN-CALL VIEW ──── */
-        <div ref={callContainerRef} className="vc-incall">
+        <div ref={callContainerRef} className="vc-incall relative">
+
+          {/* Direct call badge */}
+          {callPartnerName && (
+            <div className="absolute top-4 left-4 z-20 px-3.5 py-1.5 rounded-full bg-[#200539]/90 border border-[#5C0EA4] text-white text-xs font-semibold flex items-center gap-2 shadow-lg backdrop-blur-md">
+              <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+              Direct Call with {callPartnerName}
+            </div>
+          )}
 
           {/* Participant count badge */}
           <div className="vc-participant-count">
@@ -849,20 +976,27 @@ const VideoConference = () => {
                 display: 'grid',
                 gridTemplateColumns: `repeat(${gridLayout.cols}, 1fr)`,
                 gridAutoRows: `minmax(0, 1fr)`,
-                maxWidth: '100%',
+                gap: '12px',
+                width: '100%',
+                height: '100%',
                 maxHeight: '100%',
               } : {}}>
                 {allTiles.map(tile => (
                   <VideoTile
                     key={tile.id}
                     stream={tile.stream}
+                    avatar={tile.avatar}
                     label={tile.label}
                     isSelf={tile.isSelf}
                     isMuted={tile.isSelf ? isMuted : false}
                     isVideoOff={tile.isSelf ? isVideoOff : false}
                     isPinned={false}
                     onPin={() => handlePin(tile.id)}
-                    tileStyle={{
+                    tileStyle={allTiles.length === 2 ? {
+                      width: '100%',
+                      height: '100%',
+                      minHeight: 0,
+                    } : {
                       width: '100%',
                       aspectRatio: '16/9',
                       maxHeight: '100%',
@@ -870,8 +1004,8 @@ const VideoConference = () => {
                   />
                 ))}
 
-                {/* Waiting for peers placeholder */}
-                {remoteStreams.size === 0 && (
+                {/* Waiting for peers placeholder (ONLY for group meetings with no direct partner) */}
+                {remoteStreams.size === 0 && !callPartnerName && (
                   <div className="vc-waiting" style={{
                     width: '100%',
                     aspectRatio: '16/9',
@@ -893,19 +1027,19 @@ const VideoConference = () => {
             <div className="vc-controls-row">
               <button
                 onClick={() => {
-                  toggleMuteHook();
-                  setIsMuted((v) => !v);
+                  const nowMuted = toggleMuteHook();
+                  setIsMuted(nowMuted);
                 }}
                 className={`vc-ctrl-btn ${isMuted ? 'vc-ctrl-btn--active' : 'vc-ctrl-btn--default'}`}
-                title={isMuted ? 'Unmute' : 'Mute'}
+                title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
               >
                 <img src={mic} style={{ filter: isMuted ? 'brightness(2)' : 'none' }} alt="mic" />
               </button>
 
               <button
-                onClick={() => {
-                  toggleVideoHook();
-                  setIsVideoOff((v) => !v);
+                onClick={async () => {
+                  const nowVideoActive = await toggleVideoHook();
+                  setIsVideoOff(!nowVideoActive);
                 }}
                 className={`vc-ctrl-btn ${isVideoOff ? 'vc-ctrl-btn--active' : 'vc-ctrl-btn--default'}`}
                 title={isVideoOff ? 'Turn on video' : 'Turn off video'}

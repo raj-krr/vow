@@ -19,7 +19,7 @@ import VideoConference from "./VideoConference.jsx";
 import { useVoiceCall } from "../voice/useVoiceCall.js";
 import { useMembers } from "../useMembers.js";
 
-import socket, { sendDirectMessage } from "./socket.jsx";
+import socket, { connectSocket, sendDirectMessage } from "./socket.jsx";
 import ChatLayout from "./ChatLayout.jsx";
 import { getChannels } from "../../api/channelApi.js";
 
@@ -37,6 +37,7 @@ const Chat = ({ username, roomId, remoteUserId }) => {
   const profile = useSelector((state) => state.user.profile);
   const reduxUserId = useSelector((state) => state.user.userId);
   const reduxWorkspaceId = useSelector((state) => state.user.workspaceId);
+  const presenceSelfId = useSelector((state) => state.presence?.selfId);
 
   const jwtUserId = useMemo(() => {
     try {
@@ -89,7 +90,24 @@ const Chat = ({ username, roomId, remoteUserId }) => {
   const [dmReceiverId, setDmReceiverId] = useState(null);
   const [dmReceiverName, setDmReceiverName] = useState("");
   const [unreadDMs, setUnreadDMs] = useState({});
-  const [actionType, setActionType] = useState(null);
+  const [callRoomId, setCallRoomId] = useState(null);
+  const [callPartner, setCallPartner] = useState(null);
+  const [callPartnerId, setCallPartnerId] = useState(null);
+  const [callPartnerAvatar, setCallPartnerAvatar] = useState("");
+  const [lastCallEndTime, setLastCallEndTime] = useState(0);
+  const [lastCallPartnerId, setLastCallPartnerId] = useState(null);
+
+  const callPartnerIdRef = useRef(null);
+  const callRoomIdRef = useRef(null);
+
+  const setCallSession = useCallback((roomId, partnerName, partnerId, partnerAvatar = "") => {
+    callRoomIdRef.current = roomId;
+    callPartnerIdRef.current = partnerId;
+    setCallRoomId(roomId);
+    setCallPartner(partnerName);
+    setCallPartnerId(partnerId);
+    setCallPartnerAvatar(partnerAvatar);
+  }, []);
 
   const textareaRef = useRef(null);
   const mainRef = useRef(null);
@@ -218,6 +236,190 @@ const Chat = ({ username, roomId, remoteUserId }) => {
     );
   };
 
+  // ✅ START DIRECT CALL ON AVATAR COLLISION
+  const handleStartCollisionCall = useCallback((receiverId, receiverName, receiverAvatar = "") => {
+    const currentUserId = String(
+      presenceSelfId ||
+      userId ||
+      profile?._id ||
+      profile?.id ||
+      jwtUserId ||
+      localStorage.getItem("userId") ||
+      ""
+    );
+    if (!receiverId || receiverId === "undefined" || !currentUserId) {
+      console.warn("[Collision] Invalid receiverId or currentUserId for collision call", receiverId, currentUserId);
+      return;
+    }
+
+    // Deterministic roomId for the pair of users in this workspace
+    // If we are already in an active room, invite the new peer to join our existing room
+    const myCurrentRoom = callRoomIdRef.current;
+    let generatedRoom = myCurrentRoom;
+    if (!generatedRoom) {
+      const sortedPair = [String(currentUserId), String(receiverId)].sort();
+      generatedRoom = `call-${workspaceId || "ws"}-${sortedPair[0]}-${sortedPair[1]}`;
+    }
+
+    console.log(`[Collision] 🤝 Avatar collision! Starting call with ${receiverName} (${receiverId}) in room: ${generatedRoom}`);
+
+    setCallSession(generatedRoom, receiverName || "Member", receiverId, receiverAvatar);
+
+    // Signal remote user via presence/dm socket so both users start the call simultaneously
+    if (socket) {
+      connectSocket();
+      socket.emit("collision_call", {
+        workspaceId,
+        targetUserId: receiverId,
+        callerId: currentUserId,
+        callerSocketId: socket.id,
+        callerName: profile?.fullName || profile?.username || username || "Member",
+        callerAvatar: profile?.avatar || "",
+        roomId: generatedRoom,
+      });
+    }
+
+    setShowMap(false);
+    setShowMeeting(false);
+    setShowVideoConference(true);
+  }, [userId, presenceSelfId, jwtUserId, workspaceId, profile, username, setCallSession]);
+
+  // ✅ END DIRECT CALL ON USER HANGUP
+  const handleEndCollisionCall = useCallback(() => {
+    const partnerId = callPartnerIdRef.current;
+    const currentRoom = callRoomIdRef.current;
+    console.log("[Collision] 📴 Ending call locally. Partner was:", partnerId, "Room:", currentRoom);
+
+    if (socket && (partnerId || currentRoom)) {
+      socket.emit("collision_call_ended", {
+        workspaceId,
+        targetUserId: partnerId || null,
+        callerId: String(presenceSelfId || userId || localStorage.getItem("userId") || ""),
+        callerSocketId: socket.id,
+        roomId: currentRoom,
+      });
+    }
+
+    if (partnerId) setLastCallPartnerId(partnerId);
+    setLastCallEndTime(Date.now());
+    setCallSession(null, null, null, "");
+    setShowVideoConference(false);
+    setShowMap(true);
+  }, [workspaceId, userId, presenceSelfId, setCallSession]);
+
+  // Listen for incoming collision call notifications and remote call endings
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleIncomingCollisionCall = (data) => {
+      if (!data) return;
+      const { callerId, callerName, targetUserId, roomId, callerSocketId, callerAvatar } = data;
+      console.log("[Collision] 📞 Received collision_call_incoming:", data);
+
+      // Only ignore if THIS EXACT tab/socket was the caller
+      if (callerSocketId && socket?.id && callerSocketId === socket.id) {
+        console.log("[Collision] Ignoring own event from callerSocketId:", callerSocketId);
+        return;
+      }
+
+      const myMember = (members || []).find((m) =>
+        String(m._id || m.id || m.userId) === String(presenceSelfId || userId || localStorage.getItem("userId"))
+      );
+
+      const allMyIds = [
+        String(presenceSelfId || ""),
+        String(userId || ""),
+        String(profile?._id || ""),
+        String(profile?.id || ""),
+        String(profile?.userId || ""),
+        String(jwtUserId || ""),
+        String(myMember?._id || ""),
+        String(myMember?.userId || ""),
+        String(myMember?.id || ""),
+      ].filter(Boolean);
+
+      // If no socket ID, check presenceSelfId directly
+      if (!callerSocketId && callerId && presenceSelfId && String(callerId) === String(presenceSelfId)) {
+        console.log("[Collision] Ignoring own event from presenceSelfId:", callerId);
+        return;
+      }
+
+      // Check if this incoming call is targeted at us
+      let isForMe = false;
+      if (!targetUserId || targetUserId === "all") {
+        isForMe = true;
+      } else {
+        const targetStr = String(targetUserId).toLowerCase();
+        isForMe = allMyIds.some((id) => String(id).toLowerCase() === targetStr);
+
+        // Also check if username matches
+        if (!isForMe) {
+          const myNames = [
+            profile?.username,
+            profile?.fullName,
+            username,
+            localStorage.getItem("username"),
+            myMember?.fullName,
+            myMember?.username,
+          ].filter(Boolean).map((n) => String(n).toLowerCase());
+
+          if (myNames.includes(targetStr)) {
+            isForMe = true;
+          }
+        }
+      }
+
+      if (!isForMe) {
+        console.log("[Collision] Event not for me. targetUserId:", targetUserId, "allMyIds:", allMyIds);
+        return;
+      }
+
+      console.log(`[Collision] 📞 Joining collision call from ${callerName} (${callerId}) in room: ${roomId}`);
+      setCallSession(roomId, callerName || "Member", callerId, callerAvatar || "");
+      setShowMap(false);
+      setShowMeeting(false);
+      setShowVideoConference(true);
+    };
+
+    const handleCollisionCallEnded = (data) => {
+      if (!data) return;
+      const { callerId, targetUserId, roomId, callerSocketId } = data;
+
+      if (callerSocketId && socket?.id && callerSocketId === socket.id) return;
+
+      const myCurrentId = String(presenceSelfId || userId || localStorage.getItem("userId") || "");
+      const myActiveRoom = String(callRoomIdRef.current || "");
+      const myPartnerId = String(callPartnerIdRef.current || "");
+
+      // Ignore if sent by ourselves
+      if (!callerSocketId && callerId && presenceSelfId && String(callerId) === String(presenceSelfId)) return;
+
+      // If we have an active room and data specifies a roomId, ensure it matches our active room
+      if (myActiveRoom && roomId && String(roomId) !== myActiveRoom) return;
+
+      const roomMatches = roomId && myActiveRoom && String(roomId) === myActiveRoom;
+      const partnerMatches = callerId && myPartnerId && String(callerId) === myPartnerId;
+      const targetMatches = targetUserId && myCurrentId && String(targetUserId) === myCurrentId;
+
+      if (!roomMatches && !partnerMatches && !targetMatches) return;
+
+      console.log(`[Collision] 📴 Remote partner (${callerId}) ended collision call in room: ${roomId}`);
+      if (callerId) setLastCallPartnerId(callerId);
+      setLastCallEndTime(Date.now());
+      setCallSession(null, null, null, "");
+      setShowVideoConference(false);
+      setShowMap(true);
+    };
+
+    socket.on("collision_call_incoming", handleIncomingCollisionCall);
+    socket.on("collision_call_ended", handleCollisionCallEnded);
+
+    return () => {
+      socket.off("collision_call_incoming", handleIncomingCollisionCall);
+      socket.off("collision_call_ended", handleCollisionCallEnded);
+    };
+  }, [userId, presenceSelfId, jwtUserId, members, profile, username, setCallSession]);
+
   const sendMessage = async () => {
     if (!messageInput.trim() && attachments.length === 0) return;
 
@@ -283,12 +485,15 @@ const Chat = ({ username, roomId, remoteUserId }) => {
               setShowMap(false);
               setShowMeeting(false);
               setShowVideoConference(false);
+              setCallRoomId(null);
+              setCallPartner(null);
               sessionStorage.removeItem("currentDM");
             }}
             onStartDM={(id, name) => {
               setShowMap(false);
               setShowMeeting(false);
               setShowVideoConference(false);
+              setCallSession(null, null, null);
               handleStartDM(id, name);
             }}
             unreadDMs={unreadDMs}
@@ -296,6 +501,7 @@ const Chat = ({ username, roomId, remoteUserId }) => {
               setShowMap(true);
               setShowMeeting(false);
               setShowVideoConference(false);
+              setCallSession(null, null, null);
               setIsDMMode(false);
               setDmReceiverId(null);
               sessionStorage.removeItem("currentDM");
@@ -304,6 +510,7 @@ const Chat = ({ username, roomId, remoteUserId }) => {
               setShowMap(true);
               setShowMeeting(false);
               setShowVideoConference(false);
+              setCallSession(null, null, null);
               setIsDMMode(false);
               setDmReceiverId(null);
               sessionStorage.removeItem("currentDM");
@@ -312,16 +519,19 @@ const Chat = ({ username, roomId, remoteUserId }) => {
               setShowMap(false);
               setShowMeeting(true);
               setShowVideoConference(false);
+              setCallSession(null, null, null);
             }}
             onVideoConferenceClick={() => {
               setShowMap(false);
               setShowMeeting(false);
               setShowVideoConference(true);
+              setCallSession(null, null, null);
             }}
             onChatClick={() => {
               setShowMap(false);
               setShowMeeting(false);
               setShowVideoConference(false);
+              setCallSession(null, null, null);
             }}
             onCreateTeam={() => setShowCreateTeamModal(true)}
             onOpenMemberModal={() => setShowCreateTeamModal(true)}
@@ -330,15 +540,23 @@ const Chat = ({ username, roomId, remoteUserId }) => {
       >
         {showMap ? (
           <Map
-            onAvatarCollision={(receiverId, receiverName) => {
-              handleStartDM(receiverId, receiverName);
-              setShowMap(false);
+            lastCallEndTime={lastCallEndTime}
+            lastCallPartnerId={lastCallPartnerId}
+            onAvatarCollision={(receiverId, receiverName, receiverAvatar) => {
+              handleStartCollisionCall(receiverId, receiverName, receiverAvatar);
             }}
           />
         ) : showMeeting ? (
           <ManagerMeeting />
         ) : showVideoConference ? (
-          <VideoConference />
+          <VideoConference
+            key={callRoomId || "video-conf"}
+            initialRoomId={callRoomId}
+            autoStart={!!callRoomId}
+            callPartnerName={callPartner}
+            callPartnerAvatar={callPartnerAvatar}
+            onLeaveCall={handleEndCollisionCall}
+          />
         ) : (
           <>
             <Header title={headerTitle} onCallClick={() => startCall(remoteUserId)} />
