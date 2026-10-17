@@ -52,11 +52,14 @@ export const useSfuVideoCall = () => {
   const heartbeatIntervalRef = useRef(null);
   const iceRestartCountRef = useRef(new Map()); // peerId -> restart count
   const isAudioOnlyCallRef = useRef(false);
+  const dataChannelsRef = useRef(new Map()); // peerId -> RTCDataChannel
+  const localMediaStateRef = useRef({ isVideoOff: false, isMuted: false });
 
   const [roomId, setRoomId] = useState(null);
   const [participantId, setParticipantId] = useState(null);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState(new Map());
+  const [remoteMediaStates, setRemoteMediaStates] = useState(new Map()); // peerId -> { isVideoOff: boolean, isMuted: boolean }
 
   const updateLocalStream = useCallback((stream) => {
     localStreamRef.current = stream;
@@ -185,6 +188,34 @@ export const useSfuVideoCall = () => {
   }, []);
 
   const createPeer = useCallback((peerId, currentRoomId) => {
+    // In direct 1-on-1 collision calls, there is only one remote peer.
+    // If a new peer connection arrives with a different ID, evict any prior connections!
+    const isDirectCall = (currentRoomId && String(currentRoomId).startsWith("call-")) ||
+                         (roomIdRef.current && String(roomIdRef.current).startsWith("call-"));
+    if (isDirectCall) {
+      for (const [oldPeerId, oldPc] of peersRef.current.entries()) {
+        if (oldPeerId !== peerId) {
+          console.log("[SFU 1-on-1] Evicting prior peer connection:", oldPeerId, "for new peer:", peerId);
+          try { oldPc.close(); } catch (_) {}
+          peersRef.current.delete(oldPeerId);
+          dataChannelsRef.current.get(oldPeerId)?.close?.();
+          dataChannelsRef.current.delete(oldPeerId);
+          candidateQueuesRef.current.delete(oldPeerId);
+          iceRestartCountRef.current.delete(oldPeerId);
+          setRemoteStreams((prev) => {
+            const m = new Map(prev);
+            m.delete(oldPeerId);
+            return m;
+          });
+          setRemoteMediaStates((prev) => {
+            const m = new Map(prev);
+            m.delete(oldPeerId);
+            return m;
+          });
+        }
+      }
+    }
+
     const existing = peersRef.current.get(peerId);
     if (existing) {
       if (existing.connectionState !== "failed" && existing.connectionState !== "closed") {
@@ -199,6 +230,38 @@ export const useSfuVideoCall = () => {
     console.log("[SFU] Creating new peer connection for:", peerId);
 
     const pc = new RTCPeerConnection(ICE_CONFIG);
+
+    // Pre-negotiated DataChannel for instant P2P media state synchronization
+    try {
+      const dc = pc.createDataChannel("media-state", { negotiated: true, id: 10 });
+      dc.onopen = () => {
+        try {
+          dc.send(JSON.stringify({
+            type: "media-state",
+            ...localMediaStateRef.current,
+          }));
+        } catch (_) {}
+      };
+      dc.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data && data.type === "media-state") {
+            console.log("[SFU DC] Media state from peer:", peerId, data);
+            setRemoteMediaStates((prev) => {
+              const m = new Map(prev);
+              m.set(peerId, {
+                isVideoOff: Boolean(data.isVideoOff),
+                isMuted: Boolean(data.isMuted),
+              });
+              return m;
+            });
+          }
+        } catch (_) {}
+      };
+      dataChannelsRef.current.set(peerId, dc);
+    } catch (err) {
+      console.warn("[SFU] Could not create data channel for peer:", peerId, err);
+    }
 
     pc.onicecandidate = (e) => {
       if (e.candidate && signalingRef.current) {
@@ -384,6 +447,7 @@ export const useSfuVideoCall = () => {
     s.on("offer", async (msg) => {
       const from = msg.participantId;
       console.log("[SFU] Received offer from peer:", from);
+      if (!from || from === participantIdRef.current) return;
 
       const pc = createPeer(from, currentRoomId);
       const media = await ensureLocalMedia();
@@ -414,6 +478,7 @@ export const useSfuVideoCall = () => {
     });
 
     s.on("answer", async (msg) => {
+      if (!msg.participantId || msg.participantId === participantIdRef.current) return;
       const pc = peersRef.current.get(msg.participantId);
       if (!pc) {
         console.warn("[SFU] No peer connection found for answer from:", msg.participantId);
@@ -441,6 +506,7 @@ export const useSfuVideoCall = () => {
     });
 
     s.on("ice-candidate", async (msg) => {
+      if (!msg.participantId || msg.participantId === participantIdRef.current) return;
       const pc = peersRef.current.get(msg.participantId);
       const candidateInit = {
         candidate: msg.data.candidate,
@@ -464,6 +530,20 @@ export const useSfuVideoCall = () => {
       }
     });
 
+    s.on("media-state", (msg) => {
+      const fromPeerId = msg.participantId;
+      if (!fromPeerId || fromPeerId === participantIdRef.current) return;
+      console.log("[SFU WS] Media state from peer:", fromPeerId, msg.data);
+      setRemoteMediaStates((prev) => {
+        const m = new Map(prev);
+        m.set(fromPeerId, {
+          isVideoOff: Boolean(msg.data?.isVideoOff),
+          isMuted: Boolean(msg.data?.isMuted),
+        });
+        return m;
+      });
+    });
+
     s.on("participant-left", (msg) => {
       const leftPeerId = msg.participantId;
       console.log("[SFU] Participant left:", leftPeerId);
@@ -474,10 +554,17 @@ export const useSfuVideoCall = () => {
         peersRef.current.delete(leftPeerId);
       }
 
+      dataChannelsRef.current.get(leftPeerId)?.close?.();
+      dataChannelsRef.current.delete(leftPeerId);
       candidateQueuesRef.current.delete(leftPeerId);
       iceRestartCountRef.current.delete(leftPeerId);
 
       setRemoteStreams((prev) => {
+        const m = new Map(prev);
+        m.delete(leftPeerId);
+        return m;
+      });
+      setRemoteMediaStates((prev) => {
         const m = new Map(prev);
         m.delete(leftPeerId);
         return m;
@@ -527,6 +614,12 @@ export const useSfuVideoCall = () => {
     peersRef.current.clear();
     candidateQueuesRef.current.clear();
     iceRestartCountRef.current.clear();
+    dataChannelsRef.current.forEach((dc) => {
+      try { dc.close(); } catch (_) {}
+    });
+    dataChannelsRef.current.clear();
+    setRemoteMediaStates(new Map());
+    localMediaStateRef.current = { isVideoOff: false, isMuted: false };
     setRemoteStreams(new Map());
 
     if (localStreamRef.current) {
@@ -555,6 +648,31 @@ export const useSfuVideoCall = () => {
     };
   }, []);
 
+  const broadcastMediaState = useCallback((state) => {
+    localMediaStateRef.current = { ...localMediaStateRef.current, ...state };
+    const payload = JSON.stringify({ type: "media-state", ...localMediaStateRef.current });
+
+    // 1. Direct WebRTC DataChannels (zero server latency)
+    dataChannelsRef.current.forEach((dc) => {
+      if (dc.readyState === "open") {
+        try {
+          dc.send(payload);
+        } catch (_) {}
+      }
+    });
+
+    // 2. Signaling WebSocket
+    if (signalingRef.current && roomIdRef.current) {
+      try {
+        signalingRef.current.sendMediaState(
+          roomIdRef.current,
+          participantIdRef.current,
+          localMediaStateRef.current
+        );
+      } catch (_) {}
+    }
+  }, []);
+
   const toggleMute = useCallback(() => {
     const stream = localStreamRef.current;
     if (!stream) return false;
@@ -563,10 +681,16 @@ export const useSfuVideoCall = () => {
       audioTrack.enabled = !audioTrack.enabled;
       console.log("[SFU] Audio track enabled:", audioTrack.enabled);
       setLocalStream(new MediaStream(stream.getTracks()));
-      return !audioTrack.enabled; // returns true if now muted
+      const videoTrack = stream.getVideoTracks()[0];
+      const isMutedNow = !audioTrack.enabled;
+      broadcastMediaState({
+        isMuted: isMutedNow,
+        isVideoOff: videoTrack ? !videoTrack.enabled : false,
+      });
+      return isMutedNow; // returns true if now muted
     }
     return false;
-  }, []);
+  }, [broadcastMediaState]);
 
   const toggleVideo = useCallback(async () => {
     const stream = localStreamRef.current;
@@ -577,7 +701,13 @@ export const useSfuVideoCall = () => {
       videoTrack.enabled = !videoTrack.enabled;
       console.log("[SFU] Video track toggled, enabled:", videoTrack.enabled);
       setLocalStream(new MediaStream(stream.getTracks()));
-      return videoTrack.enabled; // returns true if video is active
+      const audioTrack = stream.getAudioTracks()[0];
+      const isVideoActiveNow = videoTrack.enabled;
+      broadcastMediaState({
+        isVideoOff: !isVideoActiveNow,
+        isMuted: audioTrack ? !audioTrack.enabled : false,
+      });
+      return isVideoActiveNow; // returns true if video is active
     } else {
       // Dynamic camera track acquisition when user switches from audio-only to video
       try {
@@ -609,6 +739,11 @@ export const useSfuVideoCall = () => {
           }
 
           setLocalStream(new MediaStream(stream.getTracks()));
+          const audioTrack = stream.getAudioTracks()[0];
+          broadcastMediaState({
+            isVideoOff: false,
+            isMuted: audioTrack ? !audioTrack.enabled : false,
+          });
           return true;
         }
       } catch (camErr) {
@@ -617,13 +752,15 @@ export const useSfuVideoCall = () => {
       }
     }
     return false;
-  }, []);
+  }, [broadcastMediaState]);
 
   return {
     roomId,
     participantId,
     localStream,
     remoteStreams,
+    remoteMediaStates,
+    broadcastMediaState,
     join,
     leave,
     toggleMute,

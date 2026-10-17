@@ -251,4 +251,13 @@ export default class SfuSignalingClient {
       },
     });
   }
+
+  sendMediaState(roomId, from, mediaState) {
+    this.send({
+      type: "media-state",
+      roomId,
+      participantId: from || this.participantId,
+      data: mediaState,
+    });
+  }
 }

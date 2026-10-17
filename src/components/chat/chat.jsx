@@ -555,6 +555,9 @@ const Chat = ({ username, roomId, remoteUserId }) => {
             autoStart={!!callRoomId}
             callPartnerName={callPartner}
             callPartnerAvatar={callPartnerAvatar}
+            callPartnerId={callPartnerId}
+            workspaceId={workspaceId}
+            socket={socket}
             onLeaveCall={handleEndCollisionCall}
           />
         ) : (

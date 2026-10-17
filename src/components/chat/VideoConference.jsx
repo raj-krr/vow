@@ -134,7 +134,7 @@ const VideoTile = React.memo(function VideoTile({
         ref={videoRef}
         autoPlay
         playsInline
-        muted={isSelf}
+        muted={true}
         style={{
           width: '100%',
           height: '100%',
@@ -217,11 +217,15 @@ const VideoConference = ({
   autoStart = false,
   callPartnerName = null,
   callPartnerAvatar = null,
+  callPartnerId = null,
+  workspaceId = null,
+  socket = null,
   onLeaveCall = null,
 }) => {
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(autoStart);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [socketMediaState, setSocketMediaState] = useState({ isVideoOff: false, isMuted: false });
   const [stream, setStream] = useState(null);
   const [lastEmoji, setLastEmoji] = useState(null);
   const reactionTimeoutRef = useRef(null);
@@ -250,11 +254,31 @@ const VideoConference = ({
     participantId,
     localStream,
     remoteStreams,
+    remoteMediaStates,
+    broadcastMediaState,
     join,
     leave,
     toggleMute: toggleMuteHook,
     toggleVideo: toggleVideoHook,
   } = useSfuVideoCall();
+
+  // Listen to peer media toggle events via Socket.IO for cross-channel redundancy
+  useEffect(() => {
+    if (!socket) return;
+    const handlePeerMediaToggle = (data) => {
+      if (!data) return;
+      if (data.roomId && generatedRoomId && data.roomId !== generatedRoomId) return;
+      console.log("[VideoConference] Received peer_media_toggle via socket:", data);
+      setSocketMediaState({
+        isVideoOff: Boolean(data.isVideoOff),
+        isMuted: Boolean(data.isMuted),
+      });
+    };
+    socket.on("peer_media_toggle", handlePeerMediaToggle);
+    return () => {
+      socket.off("peer_media_toggle", handlePeerMediaToggle);
+    };
+  }, [socket, generatedRoomId]);
 
   const activeMeetingId = roomId || generatedRoomId || joinInput;
 
@@ -302,32 +326,80 @@ const VideoConference = ({
       avatar: profile?.avatar || localStorage.getItem("avatar") || "",
       label: profile?.fullName || profile?.username || 'You',
       isSelf: true,
+      isVideoOff: isVideoOff,
+      isMuted: isMuted,
     });
 
-    // Add remotes
-    if (remoteStreams.size > 0) {
-      for (const [peerId, mediaStream] of remoteStreams.entries()) {
-        tiles.push({
-          id: (callPartnerName && remoteStreams.size === 1) ? 'remote-partner' : peerId,
-          stream: mediaStream,
-          avatar: callPartnerAvatar || "",
-          label: (remoteStreams.size === 1 && callPartnerName) ? callPartnerName : `Peer ${peerId.slice(0, 6)}`,
-          isSelf: false,
-        });
+    if (callPartnerName) {
+      // ──────────────────────────────────────────────────────────
+      // DIRECT 1-ON-1 COLLISION CALL
+      // Strictly guarantee EXACTLY 2 tiles: Self + Remote Partner!
+      // Never render 3rd or 4th tiles from duplicate or stale connections.
+      // ──────────────────────────────────────────────────────────
+      let partnerStream = null;
+      let partnerMedia = socketMediaState || {};
+
+      if (remoteStreams.size > 0) {
+        // Pick the best/most active stream for the partner:
+        // Priority 1: A stream with active video tracks
+        // Priority 2: A stream with active audio tracks
+        // Priority 3: The most recently added stream
+        const entries = Array.from(remoteStreams.entries());
+        const withVideo = [...entries].reverse().find(([_, s]) =>
+          s && s.getVideoTracks().some((t) => t.readyState === 'live')
+        );
+        const withAudio = [...entries].reverse().find(([_, s]) =>
+          s && s.getAudioTracks().some((t) => t.readyState === 'live')
+        );
+        const bestEntry = withVideo || withAudio || entries[entries.length - 1];
+
+        if (bestEntry) {
+          const [peerId, s] = bestEntry;
+          partnerStream = s;
+          const remoteState = remoteMediaStates?.get(peerId);
+          if (remoteState) {
+            partnerMedia = { ...partnerMedia, ...remoteState };
+          }
+        }
       }
-    } else if (callPartnerName) {
-      // In direct collision call, immediately render the 2nd panel cleanly
+
+      const peerVideoOff = Boolean(partnerMedia.isVideoOff);
+      const peerMuted = Boolean(partnerMedia.isMuted);
+
       tiles.push({
         id: 'remote-partner',
-        stream: null,
+        stream: partnerStream,
         avatar: callPartnerAvatar || "",
         label: callPartnerName,
         isSelf: false,
+        isVideoOff: peerVideoOff,
+        isMuted: peerMuted,
       });
+    } else {
+      // ──────────────────────────────────────────────────────────
+      // GROUP MEETING MODE (no specific direct partner)
+      // ──────────────────────────────────────────────────────────
+      if (remoteStreams.size > 0) {
+        for (const [peerId, mediaStream] of remoteStreams.entries()) {
+          const peerMedia = remoteMediaStates?.get(peerId) || socketMediaState || {};
+          const peerVideoOff = Boolean(peerMedia.isVideoOff);
+          const peerMuted = Boolean(peerMedia.isMuted);
+
+          tiles.push({
+            id: peerId,
+            stream: mediaStream,
+            avatar: "",
+            label: `Peer ${peerId.slice(0, 6)}`,
+            isSelf: false,
+            isVideoOff: peerVideoOff,
+            isMuted: peerMuted,
+          });
+        }
+      }
     }
 
     return tiles;
-  }, [stream, remoteStreams, profile, callPartnerName, callPartnerAvatar]);
+  }, [stream, remoteStreams, profile, callPartnerName, callPartnerAvatar, isVideoOff, isMuted, remoteMediaStates, socketMediaState]);
 
   // Calculate grid layout
   const totalTiles = pinnedPeerId
@@ -958,7 +1030,7 @@ const VideoConference = ({
               <path d="M23 21v-2a4 4 0 00-3-3.87"/>
               <path d="M16 3.13a4 4 0 010 7.75"/>
             </svg>
-            {allTiles.length} participant{allTiles.length !== 1 ? 's' : ''}
+            {callPartnerName ? '2 participants' : `${allTiles.length} participant${allTiles.length !== 1 ? 's' : ''}`}
           </div>
 
           {/* Video grid */}
@@ -978,8 +1050,8 @@ const VideoConference = ({
                         avatar={pinned.avatar}
                         label={pinned.label}
                         isSelf={pinned.isSelf}
-                        isMuted={pinned.isSelf ? isMuted : false}
-                        isVideoOff={pinned.isSelf ? isVideoOff : false}
+                        isMuted={pinned.isMuted}
+                        isVideoOff={pinned.isVideoOff}
                         isPinned={true}
                         onPin={() => handlePin(pinned.id)}
                         tileStyle={{ width: '100%', height: '100%' }}
@@ -996,8 +1068,8 @@ const VideoConference = ({
                       avatar={tile.avatar}
                       label={tile.label}
                       isSelf={tile.isSelf}
-                      isMuted={tile.isSelf ? isMuted : false}
-                      isVideoOff={tile.isSelf ? isVideoOff : false}
+                      isMuted={tile.isMuted}
+                      isVideoOff={tile.isVideoOff}
                       isPinned={false}
                       onPin={() => handlePin(tile.id)}
                       tileStyle={{}}
@@ -1024,8 +1096,8 @@ const VideoConference = ({
                     avatar={tile.avatar}
                     label={tile.label}
                     isSelf={tile.isSelf}
-                    isMuted={tile.isSelf ? isMuted : false}
-                    isVideoOff={tile.isSelf ? isVideoOff : false}
+                    isMuted={tile.isMuted}
+                    isVideoOff={tile.isVideoOff}
                     isPinned={false}
                     onPin={() => handlePin(tile.id)}
                     tileStyle={allTiles.length === 2 ? {
@@ -1065,6 +1137,15 @@ const VideoConference = ({
                 onClick={() => {
                   const nowMuted = toggleMuteHook();
                   setIsMuted(nowMuted);
+                  if (socket) {
+                    socket.emit("peer_media_toggle", {
+                      workspaceId,
+                      roomId: activeMeetingId,
+                      targetUserId: callPartnerId,
+                      isVideoOff,
+                      isMuted: nowMuted,
+                    });
+                  }
                 }}
                 className={`vc-ctrl-btn ${isMuted ? 'vc-ctrl-btn--active' : 'vc-ctrl-btn--default'}`}
                 title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
@@ -1075,7 +1156,17 @@ const VideoConference = ({
               <button
                 onClick={async () => {
                   const nowVideoActive = await toggleVideoHook();
-                  setIsVideoOff(!nowVideoActive);
+                  const nextVideoOff = !nowVideoActive;
+                  setIsVideoOff(nextVideoOff);
+                  if (socket) {
+                    socket.emit("peer_media_toggle", {
+                      workspaceId,
+                      roomId: activeMeetingId,
+                      targetUserId: callPartnerId,
+                      isVideoOff: nextVideoOff,
+                      isMuted,
+                    });
+                  }
                 }}
                 className={`vc-ctrl-btn ${isVideoOff ? 'vc-ctrl-btn--active' : 'vc-ctrl-btn--default'}`}
                 title={isVideoOff ? 'Turn on video' : 'Turn off video'}
