@@ -41,6 +41,98 @@ const ICE_CONFIG = {
 // Max number of ICE restarts before giving up on a peer
 const MAX_ICE_RESTARTS = 3;
 
+// Studio-grade Audio Constraints: AEC, noise suppression, AGC, and 48kHz voice capture
+const AUDIO_CONSTRAINTS = {
+  echoCancellation: { ideal: true },
+  noiseSuppression: { ideal: true },
+  autoGainControl: { ideal: true },
+  channelCount: { ideal: 1 },
+  sampleRate: { ideal: 48000 },
+  sampleSize: { ideal: 16 },
+  googEchoCancellation: { ideal: true },
+  googAutoGainControl: { ideal: true },
+  googNoiseSuppression: { ideal: true },
+  googHighpassFilter: { ideal: true },
+  googTypingNoiseDetection: { ideal: true },
+};
+
+// Google Meet-style Video Constraints: 720p HD @ 30fps ideal with smooth scaling
+const VIDEO_CONSTRAINTS = {
+  width: { ideal: 1280, min: 640 },
+  height: { ideal: 720, min: 360 },
+  frameRate: { ideal: 30, min: 15 },
+  facingMode: "user",
+};
+
+// Tune SDP for Opus Forward Error Correction (FEC), mono voice clarity, 64kbps HD bitrate, and DTX
+const tuneSdp = (sdp) => {
+  if (!sdp) return sdp;
+  let tuned = sdp;
+  const opusPtMatch = tuned.match(/a=rtpmap:(\d+)\s+opus\/48000/i);
+  if (opusPtMatch) {
+    const pt = opusPtMatch[1];
+    const fmtpRegex = new RegExp(`a=fmtp:${pt}\\s+(.*)`, "i");
+    if (fmtpRegex.test(tuned)) {
+      tuned = tuned.replace(fmtpRegex, (match, existing) => {
+        let params = existing.trim();
+        if (!params.includes("useinbandfec=")) params += ";useinbandfec=1";
+        if (!params.includes("stereo=")) params += ";stereo=0";
+        if (!params.includes("sprop-stereo=")) params += ";sprop-stereo=0";
+        if (!params.includes("usedtx=")) params += ";usedtx=1";
+        if (!params.includes("maxaveragebitrate=")) params += ";maxaveragebitrate=64000";
+        return `a=fmtp:${pt} ${params}`;
+      });
+    } else {
+      const rtpmapRegex = new RegExp(`(a=rtpmap:${pt}\\s+opus\\/48000.*\\r?\\n)`, "i");
+      tuned = tuned.replace(
+        rtpmapRegex,
+        `$1a=fmtp:${pt} minptime=10;useinbandfec=1;stereo=0;sprop-stereo=0;usedtx=1;maxaveragebitrate=64000\r\n`
+      );
+    }
+  }
+  return tuned;
+};
+
+// Configure sender parameters: 2.0 Mbps HD video with adaptive resolution, 64 kbps HD audio
+const configurePeerSenders = (pc) => {
+  if (!pc) return;
+  try {
+    const senders = pc.getSenders();
+    senders.forEach((sender) => {
+      if (!sender || !sender.track) return;
+      try {
+        const params = sender.getParameters();
+        if (!params || !params.encodings || params.encodings.length === 0) return;
+
+        let changed = false;
+        if (sender.track.kind === "video") {
+          if (params.encodings[0].maxBitrate !== 2000000) {
+            params.encodings[0].maxBitrate = 2000000; // 2.0 Mbps HD
+            changed = true;
+          }
+          if (params.encodings[0].maxFramerate !== 30) {
+            params.encodings[0].maxFramerate = 30;
+            changed = true;
+          }
+          if (params.degradationPreference !== "maintain-framerate") {
+            params.degradationPreference = "maintain-framerate"; // Dynamic resolution scaling without dropping frames
+            changed = true;
+          }
+        } else if (sender.track.kind === "audio") {
+          if (params.encodings[0].maxBitrate !== 64000) {
+            params.encodings[0].maxBitrate = 64000; // 64 kbps HD speech
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          sender.setParameters(params).catch(() => {});
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
+};
+
 export const useSfuVideoCall = () => {
   const signalingRef = useRef(null);
   const handlersRegisteredRef = useRef(false);
@@ -106,36 +198,69 @@ export const useSfuVideoCall = () => {
 
     try {
       if (audioOnly) {
-        console.log("[SFU] Acquiring audio-only stream (fast initial audio call)...");
-        const s = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: false,
-        });
-        updateLocalStream(s);
-        return s;
+        console.log("[SFU] Acquiring audio stream with studio noise suppression...");
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({
+            audio: AUDIO_CONSTRAINTS,
+            video: false,
+          });
+          updateLocalStream(s);
+          return s;
+        } catch (audioConstErr) {
+          console.warn("[SFU] Advanced audio constraints fallback:", audioConstErr);
+          const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          updateLocalStream(s);
+          return s;
+        }
       } else {
-        console.log("[SFU] Acquiring audio + video stream...");
-        const s = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: true,
-        });
-        updateLocalStream(s);
-        return s;
+        console.log("[SFU] Acquiring HD audio + video stream with noise suppression...");
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({
+            audio: AUDIO_CONSTRAINTS,
+            video: VIDEO_CONSTRAINTS,
+          });
+          updateLocalStream(s);
+          return s;
+        } catch (hdErr) {
+          console.warn("[SFU] HD constraints fallback to standard video:", hdErr);
+          try {
+            const s = await navigator.mediaDevices.getUserMedia({
+              audio: AUDIO_CONSTRAINTS,
+              video: true,
+            });
+            updateLocalStream(s);
+            return s;
+          } catch (standardErr) {
+            console.warn("[SFU] Standard constraints fallback:", standardErr);
+            const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            updateLocalStream(s);
+            return s;
+          }
+        }
       }
     } catch (err) {
       console.warn("[SFU] Could not get media (audioOnly=" + audioOnly + "):", err);
       try {
         const audioFallback = await navigator.mediaDevices.getUserMedia({
-          audio: true,
+          audio: AUDIO_CONSTRAINTS,
           video: false,
         });
         updateLocalStream(audioFallback);
         return audioFallback;
       } catch (audioErr) {
-        console.warn("[SFU] Could not access microphone or camera, using fallback stream:", audioErr);
-        const emptyStream = new MediaStream();
-        updateLocalStream(emptyStream);
-        return emptyStream;
+        try {
+          const basicAudio = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false,
+          });
+          updateLocalStream(basicAudio);
+          return basicAudio;
+        } catch (_) {
+          console.warn("[SFU] Could not access microphone or camera, using fallback stream:", audioErr);
+          const emptyStream = new MediaStream();
+          updateLocalStream(emptyStream);
+          return emptyStream;
+        }
       }
     }
   }, [updateLocalStream]);
@@ -172,7 +297,9 @@ export const useSfuVideoCall = () => {
 
     try {
       const offer = await pc.createOffer({ iceRestart: true });
+      offer.sdp = tuneSdp(offer.sdp);
       await pc.setLocalDescription(offer);
+      configurePeerSenders(pc);
 
       if (signalingRef.current) {
         signalingRef.current.sendOffer(
@@ -366,6 +493,7 @@ export const useSfuVideoCall = () => {
         pc.addTrack(track, media);
       }
     });
+    configurePeerSenders(pc);
   };
 
   // Start heartbeat to keep the connection alive
@@ -425,7 +553,9 @@ export const useSfuVideoCall = () => {
         attachLocalTracks(pc, media);
 
         const offer = await pc.createOffer();
+        offer.sdp = tuneSdp(offer.sdp);
         await pc.setLocalDescription(offer);
+        configurePeerSenders(pc);
 
         signalingRef.current.sendOffer(currentRoomId, msg.participantId, p.id, offer);
       }
@@ -471,7 +601,9 @@ export const useSfuVideoCall = () => {
       await processCandidateQueue(from, pc);
 
       const ans = await pc.createAnswer();
+      ans.sdp = tuneSdp(ans.sdp);
       await pc.setLocalDescription(ans);
+      configurePeerSenders(pc);
 
       signalingRef.current.sendAnswer(currentRoomId, participantIdRef.current, from, ans);
       console.log("[SFU] Answer sent to peer:", from);
@@ -499,6 +631,7 @@ export const useSfuVideoCall = () => {
           sdp: msg.data.sdp,
         }));
         await processCandidateQueue(msg.participantId, pc);
+        configurePeerSenders(pc);
         console.log("[SFU] Answer applied successfully for peer:", msg.participantId);
       } catch (err) {
         console.error("[SFU] Error setting remote description (answer):", err);
@@ -712,7 +845,12 @@ export const useSfuVideoCall = () => {
       // Dynamic camera track acquisition when user switches from audio-only to video
       try {
         console.log("[SFU] Requesting camera track dynamically...");
-        const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        let camStream;
+        try {
+          camStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
+        } catch (_) {
+          camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        }
         const newTrack = camStream.getVideoTracks()[0];
         if (newTrack) {
           stream.addTrack(newTrack);
@@ -723,7 +861,9 @@ export const useSfuVideoCall = () => {
             try {
               pc.addTrack(newTrack, stream);
               const offer = await pc.createOffer();
+              offer.sdp = tuneSdp(offer.sdp);
               await pc.setLocalDescription(offer);
+              configurePeerSenders(pc);
               if (signalingRef.current && roomIdRef.current && participantIdRef.current) {
                 signalingRef.current.sendOffer(
                   roomIdRef.current,
