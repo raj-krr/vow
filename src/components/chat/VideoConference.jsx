@@ -75,9 +75,10 @@ const VideoTile = React.memo(function VideoTile({
   tileStyle,
 }) {
   const videoRef = useRef(null);
+  const audioRef = useRef(null);
   const [trackCount, setTrackCount] = useState(0);
 
-  // Listen to track changes (add/remove/mute/unmute) so video state stays reactive
+  // Listen to track changes (add/remove/mute/unmute) so video and audio stay reactive
   useEffect(() => {
     if (!stream) return;
     const handleTrackChange = () => {
@@ -86,6 +87,11 @@ const VideoTile = React.memo(function VideoTile({
     stream.addEventListener('addtrack', handleTrackChange);
     stream.addEventListener('removetrack', handleTrackChange);
     stream.getVideoTracks().forEach((track) => {
+      track.addEventListener('mute', handleTrackChange);
+      track.addEventListener('unmute', handleTrackChange);
+      track.addEventListener('ended', handleTrackChange);
+    });
+    stream.getAudioTracks().forEach((track) => {
       track.addEventListener('mute', handleTrackChange);
       track.addEventListener('unmute', handleTrackChange);
       track.addEventListener('ended', handleTrackChange);
@@ -99,25 +105,41 @@ const VideoTile = React.memo(function VideoTile({
         track.removeEventListener('unmute', handleTrackChange);
         track.removeEventListener('ended', handleTrackChange);
       });
+      stream.getAudioTracks().forEach((track) => {
+        track.removeEventListener('mute', handleTrackChange);
+        track.removeEventListener('unmute', handleTrackChange);
+        track.removeEventListener('ended', handleTrackChange);
+      });
     };
   }, [stream]);
 
+  // Video element setup: strictly MUTED at all times to eliminate echo loops
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
+    el.defaultMuted = true;
+    el.muted = true;
+    el.volume = 0;
     if (el.srcObject !== stream) {
       el.srcObject = stream || null;
     }
     if (stream) {
-      el.play().catch(() => {
-        // Fall back to muted playback if browser autoplay policy blocks unmuted video
-        if (!isSelf) {
-          el.muted = true;
-          el.play().catch(() => {});
-        }
-      });
+      el.play().catch(() => {});
     }
-  }, [stream, trackCount, isSelf]);
+  }, [stream, trackCount]);
+
+  // Audio element setup: only rendered and played for remote peers (!isSelf)
+  useEffect(() => {
+    const audioEl = audioRef.current;
+    if (!audioEl || isSelf) return;
+    audioEl.muted = Boolean(isMuted);
+    if (audioEl.srcObject !== stream) {
+      audioEl.srcObject = stream || null;
+    }
+    if (stream && !isMuted) {
+      audioEl.play?.().catch((err) => console.log("[SFU Remote Audio]", err));
+    }
+  }, [stream, isMuted, isSelf, trackCount]);
 
   const hasVideo = Boolean(
     stream && stream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live')
@@ -129,12 +151,12 @@ const VideoTile = React.memo(function VideoTile({
       style={tileStyle}
       onClick={onPin}
     >
-      {/* Video element */}
+      {/* Video element - strictly muted so audio is never played or looped back from video */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted={true}
+        muted
         style={{
           width: '100%',
           height: '100%',
@@ -144,17 +166,12 @@ const VideoTile = React.memo(function VideoTile({
         }}
       />
 
-      {/* Remote audio guarantee: plays through speakers even when video is off */}
+      {/* Remote audio: strictly for remote peers (!isSelf), NEVER for self */}
       {!isSelf && stream && (
         <audio
+          ref={audioRef}
           autoPlay
           playsInline
-          ref={(audioEl) => {
-            if (audioEl && audioEl.srcObject !== stream) {
-              audioEl.srcObject = stream;
-              audioEl.play?.().catch((err) => console.log("[SFU Remote Audio]", err));
-            }
-          }}
         />
       )}
 
@@ -268,7 +285,15 @@ const VideoConference = ({
     const handlePeerMediaToggle = (data) => {
       if (!data) return;
       if (data.roomId && generatedRoomId && data.roomId !== generatedRoomId) return;
-      console.log("[VideoConference] Received peer_media_toggle via socket:", data);
+
+      const myId = String(profile?._id || profile?.id || localStorage.getItem("userId") || "");
+      // Strictly ignore our own toggle events to prevent self-loopback
+      if (data.callerId && myId && String(data.callerId) === myId) return;
+
+      // If in a 1-on-1 call with a specific partner, verify the event came from that partner
+      if (callPartnerId && data.callerId && String(data.callerId) !== String(callPartnerId)) return;
+
+      console.log("[VideoConference] Received partner peer_media_toggle via socket:", data);
       setSocketMediaState({
         isVideoOff: Boolean(data.isVideoOff),
         isMuted: Boolean(data.isMuted),
@@ -278,7 +303,7 @@ const VideoConference = ({
     return () => {
       socket.off("peer_media_toggle", handlePeerMediaToggle);
     };
-  }, [socket, generatedRoomId]);
+  }, [socket, generatedRoomId, profile, callPartnerId]);
 
   const activeMeetingId = roomId || generatedRoomId || joinInput;
 
@@ -1141,6 +1166,7 @@ const VideoConference = ({
                     socket.emit("peer_media_toggle", {
                       workspaceId,
                       roomId: activeMeetingId,
+                      callerId: profile?._id || profile?.id || localStorage.getItem("userId"),
                       targetUserId: callPartnerId,
                       isVideoOff,
                       isMuted: nowMuted,
@@ -1162,6 +1188,7 @@ const VideoConference = ({
                     socket.emit("peer_media_toggle", {
                       workspaceId,
                       roomId: activeMeetingId,
+                      callerId: profile?._id || profile?.id || localStorage.getItem("userId"),
                       targetUserId: callPartnerId,
                       isVideoOff: nextVideoOff,
                       isMuted,

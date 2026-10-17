@@ -43,17 +43,17 @@ const MAX_ICE_RESTARTS = 3;
 
 // Studio-grade Audio Constraints: AEC, noise suppression, AGC, and 48kHz voice capture
 const AUDIO_CONSTRAINTS = {
-  echoCancellation: { ideal: true },
-  noiseSuppression: { ideal: true },
-  autoGainControl: { ideal: true },
-  channelCount: { ideal: 1 },
-  sampleRate: { ideal: 48000 },
-  sampleSize: { ideal: 16 },
-  googEchoCancellation: { ideal: true },
-  googAutoGainControl: { ideal: true },
-  googNoiseSuppression: { ideal: true },
-  googHighpassFilter: { ideal: true },
-  googTypingNoiseDetection: { ideal: true },
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: 1,
+  sampleRate: 48000,
+  sampleSize: 16,
+  googEchoCancellation: true,
+  googAutoGainControl: true,
+  googNoiseSuppression: true,
+  googHighpassFilter: true,
+  googTypingNoiseDetection: true,
 };
 
 // Google Meet-style Video Constraints: 720p HD @ 30fps ideal with smooth scaling
@@ -146,6 +146,7 @@ export const useSfuVideoCall = () => {
   const isAudioOnlyCallRef = useRef(false);
   const dataChannelsRef = useRef(new Map()); // peerId -> RTCDataChannel
   const localMediaStateRef = useRef({ isVideoOff: false, isMuted: false });
+  const participantNameRef = useRef("");
 
   const [roomId, setRoomId] = useState(null);
   const [participantId, setParticipantId] = useState(null);
@@ -182,7 +183,13 @@ export const useSfuVideoCall = () => {
     return s;
   }, []);
 
+  const mediaPromiseRef = useRef(null);
+
   const ensureLocalMedia = useCallback(async (options = {}) => {
+    if (mediaPromiseRef.current) {
+      return mediaPromiseRef.current;
+    }
+
     const audioOnly = options.audioOnly ?? isAudioOnlyCallRef.current;
     const current = localStreamRef.current;
     if (current && current.active && current.getTracks().some(t => t.readyState === "live")) {
@@ -196,73 +203,79 @@ export const useSfuVideoCall = () => {
       }
     }
 
-    try {
-      if (audioOnly) {
-        console.log("[SFU] Acquiring audio stream with studio noise suppression...");
-        try {
-          const s = await navigator.mediaDevices.getUserMedia({
-            audio: AUDIO_CONSTRAINTS,
-            video: false,
-          });
-          updateLocalStream(s);
-          return s;
-        } catch (audioConstErr) {
-          console.warn("[SFU] Advanced audio constraints fallback:", audioConstErr);
-          const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-          updateLocalStream(s);
-          return s;
-        }
-      } else {
-        console.log("[SFU] Acquiring HD audio + video stream with noise suppression...");
-        try {
-          const s = await navigator.mediaDevices.getUserMedia({
-            audio: AUDIO_CONSTRAINTS,
-            video: VIDEO_CONSTRAINTS,
-          });
-          updateLocalStream(s);
-          return s;
-        } catch (hdErr) {
-          console.warn("[SFU] HD constraints fallback to standard video:", hdErr);
+    mediaPromiseRef.current = (async () => {
+      try {
+        if (audioOnly) {
+          console.log("[SFU] Acquiring audio stream with studio noise suppression...");
           try {
             const s = await navigator.mediaDevices.getUserMedia({
               audio: AUDIO_CONSTRAINTS,
-              video: true,
+              video: false,
             });
             updateLocalStream(s);
             return s;
-          } catch (standardErr) {
-            console.warn("[SFU] Standard constraints fallback:", standardErr);
-            const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+          } catch (audioConstErr) {
+            console.warn("[SFU] Advanced audio constraints fallback:", audioConstErr);
+            const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
             updateLocalStream(s);
             return s;
           }
+        } else {
+          console.log("[SFU] Acquiring HD audio + video stream with noise suppression...");
+          try {
+            const s = await navigator.mediaDevices.getUserMedia({
+              audio: AUDIO_CONSTRAINTS,
+              video: VIDEO_CONSTRAINTS,
+            });
+            updateLocalStream(s);
+            return s;
+          } catch (hdErr) {
+            console.warn("[SFU] HD constraints fallback to standard video:", hdErr);
+            try {
+              const s = await navigator.mediaDevices.getUserMedia({
+                audio: AUDIO_CONSTRAINTS,
+                video: true,
+              });
+              updateLocalStream(s);
+              return s;
+            } catch (standardErr) {
+              console.warn("[SFU] Standard constraints fallback:", standardErr);
+              const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+              updateLocalStream(s);
+              return s;
+            }
+          }
         }
-      }
-    } catch (err) {
-      console.warn("[SFU] Could not get media (audioOnly=" + audioOnly + "):", err);
-      try {
-        const audioFallback = await navigator.mediaDevices.getUserMedia({
-          audio: AUDIO_CONSTRAINTS,
-          video: false,
-        });
-        updateLocalStream(audioFallback);
-        return audioFallback;
-      } catch (audioErr) {
+      } catch (err) {
+        console.warn("[SFU] Could not get media (audioOnly=" + audioOnly + "):", err);
         try {
-          const basicAudio = await navigator.mediaDevices.getUserMedia({
-            audio: true,
+          const audioFallback = await navigator.mediaDevices.getUserMedia({
+            audio: AUDIO_CONSTRAINTS,
             video: false,
           });
-          updateLocalStream(basicAudio);
-          return basicAudio;
-        } catch (_) {
-          console.warn("[SFU] Could not access microphone or camera, using fallback stream:", audioErr);
-          const emptyStream = new MediaStream();
-          updateLocalStream(emptyStream);
-          return emptyStream;
+          updateLocalStream(audioFallback);
+          return audioFallback;
+        } catch (audioErr) {
+          try {
+            const basicAudio = await navigator.mediaDevices.getUserMedia({
+              audio: true,
+              video: false,
+            });
+            updateLocalStream(basicAudio);
+            return basicAudio;
+          } catch (_) {
+            console.warn("[SFU] Could not access microphone or camera, using fallback stream:", audioErr);
+            const emptyStream = new MediaStream();
+            updateLocalStream(emptyStream);
+            return emptyStream;
+          }
         }
+      } finally {
+        mediaPromiseRef.current = null;
       }
-    }
+    })();
+
+    return mediaPromiseRef.current;
   }, [updateLocalStream]);
 
   const processCandidateQueue = async (peerId, pc) => {
@@ -703,6 +716,13 @@ export const useSfuVideoCall = () => {
         return m;
       });
     });
+
+    s.on("reconnected", async () => {
+      console.log("[SFU] Signaling reconnected, rejoining room:", roomIdRef.current);
+      if (roomIdRef.current && participantNameRef.current) {
+        s.join(roomIdRef.current, participantNameRef.current);
+      }
+    });
   }, [createPeer, ensureLocalMedia, startHeartbeat, attemptIceRestart]);
 
   const join = useCallback(async (rid, name, options = {}) => {
@@ -711,6 +731,7 @@ export const useSfuVideoCall = () => {
 
     setRoomId(rid);
     roomIdRef.current = rid;
+    participantNameRef.current = name;
 
     const s = await ensureSignaling();
     registerHandlers(s, rid);
@@ -811,11 +832,24 @@ export const useSfuVideoCall = () => {
     if (!stream) return false;
     const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack) {
-      audioTrack.enabled = !audioTrack.enabled;
-      console.log("[SFU] Audio track enabled:", audioTrack.enabled);
+      const nextEnabled = !audioTrack.enabled;
+      audioTrack.enabled = nextEnabled;
+      console.log("[SFU] Audio track enabled:", nextEnabled);
+
+      // Directly update all RTCRtpSenders across all active peer connections
+      peersRef.current.forEach((pc) => {
+        try {
+          pc.getSenders().forEach((sender) => {
+            if (sender.track && sender.track.kind === "audio") {
+              sender.track.enabled = nextEnabled;
+            }
+          });
+        } catch (_) {}
+      });
+
       setLocalStream(new MediaStream(stream.getTracks()));
       const videoTrack = stream.getVideoTracks()[0];
-      const isMutedNow = !audioTrack.enabled;
+      const isMutedNow = !nextEnabled;
       broadcastMediaState({
         isMuted: isMutedNow,
         isVideoOff: videoTrack ? !videoTrack.enabled : false,
@@ -831,11 +865,24 @@ export const useSfuVideoCall = () => {
 
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) {
-      videoTrack.enabled = !videoTrack.enabled;
-      console.log("[SFU] Video track toggled, enabled:", videoTrack.enabled);
+      const nextEnabled = !videoTrack.enabled;
+      videoTrack.enabled = nextEnabled;
+      console.log("[SFU] Video track toggled, enabled:", nextEnabled);
+
+      // Directly update all RTCRtpSenders across all active peer connections
+      peersRef.current.forEach((pc) => {
+        try {
+          pc.getSenders().forEach((sender) => {
+            if (sender.track && sender.track.kind === "video") {
+              sender.track.enabled = nextEnabled;
+            }
+          });
+        } catch (_) {}
+      });
+
       setLocalStream(new MediaStream(stream.getTracks()));
       const audioTrack = stream.getAudioTracks()[0];
-      const isVideoActiveNow = videoTrack.enabled;
+      const isVideoActiveNow = nextEnabled;
       broadcastMediaState({
         isVideoOff: !isVideoActiveNow,
         isMuted: audioTrack ? !audioTrack.enabled : false,

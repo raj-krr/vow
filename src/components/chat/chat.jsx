@@ -374,6 +374,12 @@ const Chat = ({ username, roomId, remoteUserId }) => {
         return;
       }
 
+      // If we are already in this room, ignore duplicate incoming notification
+      if (callRoomIdRef.current && roomId && String(callRoomIdRef.current) === String(roomId)) {
+        console.log("[Collision] Already in room:", roomId, "- ignoring duplicate incoming call");
+        return;
+      }
+
       console.log(`[Collision] 📞 Joining collision call from ${callerName} (${callerId}) in room: ${roomId}`);
       setCallSession(roomId, callerName || "Member", callerId, callerAvatar || "");
       setShowMap(false);
