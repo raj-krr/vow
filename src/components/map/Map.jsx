@@ -35,6 +35,8 @@ import mapSocket, {
 
 import AvatarsLayer from "./AvatarsLayer.jsx";
 import { useMembers } from "../useMembers";
+import OfficeMiniMap from "./map-components/OfficeMiniMap.jsx";
+import TeleportPanel from "./map-components/TeleportPanel.jsx";
 
 const Map = ({ onAvatarCollision, lastCallEndTime = 0, lastCallPartnerId = null }) => {
   const dispatch = useDispatch();
@@ -502,40 +504,130 @@ useEffect(() => {
   }, [position, avatars, onAvatarCollision, currentUserId, selfId, lastCallEndTime, lastCallPartnerId, workspaceId, username, avatar]);
 
   // ----------------------------------------------
+  // TELEPORT & MINIMAP NAVIGATION
+  // ----------------------------------------------
+  const handleTeleport = useCallback((targetX, targetY) => {
+    let safeX = Math.max(3, Math.min(97, targetX));
+    let safeY = Math.max(3, Math.min(97, targetY));
+
+    if (isColliding(safeX, safeY)) {
+      const freePt = findNearestFreePoint(safeX, safeY, 50);
+      if (freePt) {
+        safeX = freePt.x;
+        safeY = freePt.y;
+      }
+    }
+
+    positionRef.current = { x: safeX, y: safeY };
+    velocityRef.current = { vx: 0, vy: 0 };
+    moveToTargetRef.current = null;
+    setPosition({ x: safeX, y: safeY });
+    saveLocalPosition({ x: safeX, y: safeY });
+    followCameraRef.current = true;
+
+    if (typeof setClickMarker === "function") {
+      try { setClickMarker({ x: safeX, y: safeY, valid: true }); } catch (_) {}
+    }
+
+    // Center camera smoothly
+    const world = containerRef.current;
+    const viewport = viewportRef.current;
+    if (world && viewport) {
+      const ax = (safeX / 100) * world.clientWidth;
+      const ay = (safeY / 100) * world.clientHeight;
+      const targetLeft = Math.max(0, Math.min(world.clientWidth - viewport.clientWidth, ax - viewport.clientWidth / 2));
+      const targetTop = Math.max(0, Math.min(world.clientHeight - viewport.clientHeight, ay - viewport.clientHeight / 2));
+      cameraPosRef.current = { left: targetLeft, top: targetTop };
+      cameraTargetRef.current = { left: targetLeft, top: targetTop };
+      viewport.scrollTo({ left: targetLeft, top: targetTop, behavior: "smooth" });
+    }
+
+    // Broadcast new position to socket peers
+    updateMapPosition({
+      workspaceId,
+      x: safeX,
+      y: safeY,
+      displayName: username,
+      avatar,
+    });
+  }, [isColliding, findNearestFreePoint, saveLocalPosition, workspaceId, username, avatar]);
+
+  const handleMinimapNavigate = useCallback((targetX, targetY) => {
+    let safeX = Math.max(3, Math.min(97, targetX));
+    let safeY = Math.max(3, Math.min(97, targetY));
+
+    if (isColliding(safeX, safeY)) {
+      const freePt = findNearestFreePoint(safeX, safeY, 50);
+      if (freePt) {
+        safeX = freePt.x;
+        safeY = freePt.y;
+      }
+    }
+
+    moveToTargetRef.current = { x: safeX, y: safeY };
+    followCameraRef.current = true;
+    if (typeof setClickMarker === "function") {
+      try { setClickMarker({ x: safeX, y: safeY, valid: true }); } catch (_) {}
+    }
+  }, [isColliding, findNearestFreePoint]);
+
+  // ----------------------------------------------
   // RENDER
   // ----------------------------------------------
   return (
-    <MapContainer
-      viewportRef={viewportRef}
-      containerRef={containerRef}
-      cursorBlocked={cursorBlocked}
-      handleMapClick={handleMapClick}
-      handlePointerMove={handlePointerMove}
-      handlePointerLeave={() => setCursorBlocked(false)}
-    >
-      <MapObjects
+    <div className="relative w-full h-full overflow-hidden select-none">
+      <MapContainer
+        viewportRef={viewportRef}
         containerRef={containerRef}
-        handleObstaclesFromChild={handleObstaclesFromChild}
+        cursorBlocked={cursorBlocked}
+        handleMapClick={handleMapClick}
+        handlePointerMove={handlePointerMove}
+        handlePointerLeave={() => setCursorBlocked(false)}
+      >
+        <MapObjects
+          containerRef={containerRef}
+          handleObstaclesFromChild={handleObstaclesFromChild}
+        />
+
+        {/* LOCAL PLAYER */}
+        <Avatar
+          image={avatar || playerImg}
+          size={avatarSize}
+          name="You"
+          style={{
+            position: "absolute",
+            top: `${position.y}%`,
+            left: `${position.x}%`,
+            transform: "translate(-50%, -50%)",
+          }}
+        />
+
+        {/* REMOTE PLAYERS */}
+        <AvatarsLayer />
+
+        <ClickMarker clickMarker={clickMarker} />
+      </MapContainer>
+
+      {/* FIXED BOTTOM-LEFT: OFFICE MINIMAP */}
+      <OfficeMiniMap
+        position={position}
+        avatars={avatars}
+        selfId={selfIdRef.current || selfId}
+        currentUserId={currentUserId}
+        viewportRef={viewportRef}
+        containerRef={containerRef}
+        onNavigate={handleMinimapNavigate}
+        onTeleport={handleTeleport}
       />
 
-      {/* LOCAL PLAYER */}
-      <Avatar
-        image={avatar || playerImg}
-        size={avatarSize}
-        name="You"
-        style={{
-          position: "absolute",
-          top: `${position.y}%`,
-          left: `${position.x}%`,
-          transform: "translate(-50%, -50%)",
-        }}
+      {/* FIXED TOP-RIGHT: TELEPORT PANEL */}
+      <TeleportPanel
+        avatars={avatars}
+        selfId={selfIdRef.current || selfId}
+        currentUserId={currentUserId}
+        onTeleport={handleTeleport}
       />
-
-      {/* REMOTE PLAYERS */}
-      <AvatarsLayer />
-
-      <ClickMarker clickMarker={clickMarker} />
-    </MapContainer>
+    </div>
   );
 };
 
