@@ -1,119 +1,144 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom'; 
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import logo from '../assets/logo.png';
-import hamburgerIcon from '../assets/hamburger.png';
+import { useLenis } from './landing/SmoothScroll';
+import { Menu, X } from 'lucide-react';
 
-const Navbar = () => {
+const navLinks = [
+  { name: 'Features', target: 'features' },
+  { name: 'How It Works', target: 'how-it-works' },
+  { name: 'Roles', target: 'roles' },
+  { name: 'Showcase', target: 'demo' },
+  { name: 'FAQ', target: 'faq' },
+];
+
+export const Navbar = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const lenis = useLenis();
 
-  // Smooth scroll navigation function
-  const handleNavigation = (targetId) => {
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 40);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleNavClick = (targetId) => {
     const element = document.getElementById(targetId);
-    if (element) {
-      element.scrollIntoView({ 
-        behavior: 'smooth',
-        block: 'start'
-      });
+    if (lenis && element) {
+      lenis.scrollTo(element, { offset: -90, duration: 1.2 });
+    } else if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    setIsMenuOpen(false); // Close mobile menu after navigation
+    setIsMenuOpen(false);
   };
 
   return (
-    <div className="w-full fixed top-0 left-0 right-0 flex justify-center py-2 sm:py-2.5 md:py-[10px] px-4 sm:px-5 md:px-[20px] lg:px-[60px] bg-transparent z-50">
-      <div className="w-full max-w-[1660px] border border-[#DDDFE1] rounded-[12px] sm:rounded-[14px] md:rounded-[16px] bg-white shadow-sm">
-        <nav className="flex justify-between items-center h-[52px] sm:h-[56px] md:h-[60px] lg:h-[64px] w-full px-4 sm:px-5 md:px-[16px] lg:px-[20px]">
-        
+    <header className="fixed top-0 left-0 right-0 z-50 flex justify-center px-4 sm:px-6 pt-3 sm:pt-4 pointer-events-none">
+      <div
+        className={`pointer-events-auto w-full max-w-5xl rounded-full transition-all duration-300 ${
+          scrolled
+            ? 'bg-white/85 backdrop-blur-md border border-[rgba(204,180,233,0.5)] shadow-lg shadow-[#5C0EA4]/5 py-2 px-4 sm:px-6'
+            : 'bg-transparent border border-transparent py-2.5 px-4 sm:px-6'
+        }`}
+      >
+        <nav className="flex items-center justify-between">
           {/* Logo */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <img src={logo} alt="Logo" className="h-[24px] sm:h-[28px] md:h-[32px] lg:h-[40px] w-auto" />
-            <span className="text-[#5C0EA4] text-[16px] sm:text-[18px] md:text-[20px] lg:text-[24px] font-bold leading-none">VOW</span>
-          </div>
+          <Link
+            to="/"
+            onClick={() => {
+              if (lenis) lenis.scrollTo(0);
+              else window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            className="flex items-center gap-2 group cursor-pointer"
+          >
+            <img
+              src={logo}
+              alt="VOW"
+              className="h-7 sm:h-8 w-auto object-contain transition-transform group-hover:scale-105"
+            />
+            <span className="text-[#5C0EA4] text-xl sm:text-2xl font-bold tracking-tight font-display">
+              VOW
+            </span>
+          </Link>
 
-          {/* Desktop Menu */}
-          <ul className="hidden lg:flex items-center gap-[30px] xl:gap-[60px] 2xl:gap-[90px]">
-            <li onClick={() => handleNavigation('home')} className="text-[#969696] font-inter text-[14px] xl:text-[15px] 2xl:text-[16px] leading-[19.2px] font-normal hover:text-[#5C0EA4] cursor-pointer transition-colors whitespace-nowrap">
-              Home
-            </li>
-            <li onClick={() => handleNavigation('features')} className="text-[#969696] font-inter text-[14px] xl:text-[15px] 2xl:text-[16px] leading-[19.2px] font-normal hover:text-[#5C0EA4] cursor-pointer transition-colors whitespace-nowrap">
-              Features
-            </li>
-            <li onClick={() => handleNavigation('user-roles')} className="text-[#969696] font-inter text-[14px] xl:text-[15px] 2xl:text-[16px] leading-[19.2px] font-normal hover:text-[#5C0EA4] cursor-pointer transition-colors whitespace-nowrap">
-              About
-            </li>
-            <li onClick={() => handleNavigation('subscribe')} className="text-[#969696] font-inter text-[14px] xl:text-[15px] 2xl:text-[16px] leading-[19.2px] font-normal hover:text-[#5C0EA4] cursor-pointer transition-colors whitespace-nowrap">
-              Contact
-            </li>
+          {/* Desktop Nav Links */}
+          <ul className="hidden md:flex items-center gap-6 lg:gap-8 list-none m-0 p-0">
+            {navLinks.map((link) => (
+              <li key={link.target}>
+                <button
+                  onClick={() => handleNavClick(link.target)}
+                  className="text-sm font-medium text-[#707070] hover:text-[#5C0EA4] transition-colors cursor-pointer tracking-tight py-2 px-1 focus-visible:ring-2 focus-visible:ring-[#5C0EA4] focus-visible:outline-none rounded-md"
+                >
+                  {link.name}
+                </button>
+              </li>
+            ))}
           </ul>
 
-          {/* Desktop Buttons */}
-          <div className="hidden lg:flex items-center gap-2 xl:gap-[10px]">
+          {/* Desktop Action Buttons */}
+          <div className="hidden md:flex items-center gap-2.5">
             <Link
               to="/login"
-              className="w-[100px] xl:w-[140px] 2xl:w-[160px] h-[38px] xl:h-[42px] 2xl:h-[44px] flex items-center justify-center rounded-[8px] border border-[#5C0EA4] text-[#5C0EA4] text-[14px] xl:text-[18px] 2xl:text-[20px] font-normal hover:bg-[#5C0EA4] hover:text-white transition-all whitespace-nowrap"
+              className="px-4 py-2 min-h-[40px] flex items-center justify-center rounded-full border border-[#5C0EA4]/40 text-[#5C0EA4] text-sm font-medium hover:bg-[#5C0EA4] hover:text-white transition-all cursor-pointer whitespace-nowrap focus-visible:ring-2 focus-visible:ring-[#5C0EA4] focus-visible:outline-none"
             >
               Log in
             </Link>
 
             <Link
               to="/signup"
-              className="w-[100px] xl:w-[140px] 2xl:w-[160px] h-[38px] xl:h-[42px] 2xl:h-[44px] flex items-center justify-center rounded-[8px] bg-[#450B7B] text-white text-[14px] xl:text-[18px] 2xl:text-[20px] font-normal hover:bg-[#5C0EA4] transition-all whitespace-nowrap"
+              className="px-5 py-2 min-h-[40px] flex items-center justify-center rounded-full bg-gradient-to-r from-[#5C0EA4] to-[#5E9BFF] text-white text-sm font-medium shadow-md shadow-[#5C0EA4]/20 hover:brightness-105 active:scale-98 transition-all cursor-pointer whitespace-nowrap focus-visible:ring-2 focus-visible:ring-[#5C0EA4] focus-visible:outline-none"
             >
               Sign up
             </Link>
           </div>
 
-          {/* Mobile Hamburger Menu */}
-          <button 
-            className="lg:hidden flex items-center justify-center focus:outline-none flex-shrink-0"
+          {/* Mobile Hamburger Toggle (44px min tap target) */}
+          <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
-            aria-label="Toggle menu"
+            className="md:hidden min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full text-[#0B0E13] hover:bg-black/5 transition cursor-pointer focus-visible:ring-2 focus-visible:ring-[#5C0EA4] focus-visible:outline-none"
+            aria-label="Toggle navigation"
+            aria-expanded={isMenuOpen}
           >
-            <img src={hamburgerIcon} alt="Menu" className="w-[24px] h-[24px] sm:w-[28px] sm:h-[28px] md:w-[32px] md:h-[32px]" />
+            {isMenuOpen ? <X className="w-6 h-6 text-[#5C0EA4]" /> : <Menu className="w-6 h-6" />}
           </button>
         </nav>
 
-        {/* Mobile Menu Dropdown */}
-        <div className={`lg:hidden overflow-hidden transition-all duration-300 ease-in-out ${isMenuOpen ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
-          <div className="border-t border-[#DDDFE1] py-3 sm:py-4 md:py-[16px] px-4 sm:px-5 md:px-[20px] bg-white rounded-b-[12px] sm:rounded-b-[14px] md:rounded-b-[16px]">
-            <ul className="flex flex-col gap-2 sm:gap-3 md:gap-[12px] mb-3 sm:mb-4 md:mb-[16px]">
-              <li 
-                className="text-[#969696] font-inter text-[14px] sm:text-[15px] md:text-[16px] font-normal hover:text-[#5C0EA4] cursor-pointer transition-colors py-1.5 sm:py-2"
-                onClick={() => handleNavigation('home')}
-              >
-                Home
-              </li>
-              <li 
-                className="text-[#969696] font-inter text-[14px] sm:text-[15px] md:text-[16px] font-normal hover:text-[#5C0EA4] cursor-pointer transition-colors py-1.5 sm:py-2"
-                onClick={() => handleNavigation('features')}
-              >
-                Features
-              </li>
-              <li 
-                className="text-[#969696] font-inter text-[14px] sm:text-[15px] md:text-[16px] font-normal hover:text-[#5C0EA4] cursor-pointer transition-colors py-1.5 sm:py-2"
-                onClick={() => handleNavigation('user-roles')}
-              >
-                About
-              </li>
-              <li 
-                className="text-[#969696] font-inter text-[14px] sm:text-[15px] md:text-[16px] font-normal hover:text-[#5C0EA4] cursor-pointer transition-colors py-1.5 sm:py-2"
-                onClick={() => handleNavigation('subscribe')}
-              >
-                Contact
-              </li>
+        {/* Slide-Down Mobile Menu Dropdown */}
+        <div
+          className={`md:hidden overflow-hidden transition-all duration-300 ease-in-out ${
+            isMenuOpen ? 'max-h-96 opacity-100 pt-4 pb-2' : 'max-h-0 opacity-0'
+          }`}
+        >
+          <div className="rounded-2xl bg-white/95 backdrop-blur-md border border-[rgba(204,180,233,0.5)] p-4 shadow-xl flex flex-col gap-3">
+            <ul className="flex flex-col gap-1 list-none m-0 p-0">
+              {navLinks.map((link) => (
+                <li key={link.target}>
+                  <button
+                    onClick={() => handleNavClick(link.target)}
+                    className="w-full text-left py-3 px-3 min-h-[44px] flex items-center rounded-lg text-sm font-medium text-[#707070] hover:text-[#5C0EA4] hover:bg-[#EFE7F6]/50 transition-colors focus-visible:ring-2 focus-visible:ring-[#5C0EA4] focus-visible:outline-none"
+                  >
+                    {link.name}
+                  </button>
+                </li>
+              ))}
             </ul>
 
-            <div className="flex flex-col gap-2 sm:gap-2.5 md:gap-[12px] pt-2">
+            <div className="flex flex-col gap-2 pt-2 border-t border-[rgba(204,180,233,0.3)]">
               <Link
                 to="/login"
-                className="w-full h-[42px] sm:h-[44px] md:h-[48px] flex items-center justify-center rounded-[8px] border border-[#5C0EA4] text-[#5C0EA4] text-[15px] sm:text-[16px] md:text-[18px] font-normal hover:bg-[#5C0EA4] hover:text-white transition-all"
+                className="w-full min-h-[44px] flex items-center justify-center rounded-xl border border-[#5C0EA4]/40 text-[#5C0EA4] text-center text-sm font-medium hover:bg-[#5C0EA4] hover:text-white transition-all focus-visible:ring-2 focus-visible:ring-[#5C0EA4] focus-visible:outline-none"
                 onClick={() => setIsMenuOpen(false)}
               >
                 Log in
               </Link>
-
               <Link
                 to="/signup"
-                className="w-full h-[42px] sm:h-[44px] md:h-[48px] flex items-center justify-center rounded-[8px] bg-[#450B7B] text-white text-[15px] sm:text-[16px] md:text-[18px] font-normal hover:bg-[#5C0EA4] transition-all"
+                className="w-full min-h-[44px] flex items-center justify-center rounded-xl bg-gradient-to-r from-[#5C0EA4] to-[#5E9BFF] text-white text-center text-sm font-medium shadow-md transition-all focus-visible:ring-2 focus-visible:ring-[#5C0EA4] focus-visible:outline-none"
                 onClick={() => setIsMenuOpen(false)}
               >
                 Sign up
@@ -122,7 +147,7 @@ const Navbar = () => {
           </div>
         </div>
       </div>
-    </div>
+    </header>
   );
 };
 

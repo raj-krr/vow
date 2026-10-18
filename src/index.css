@@ -1,5 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Poppins:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
+
+/* ========================================================
+   EXISTING APP UTILITIES (PRESERVED FOR LOGIN/DASHBOARD/MAP)
+   ======================================================== */
 .hide-scrollbar {
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* IE 10+ */
@@ -8,7 +12,7 @@
 .hide-scrollbar::-webkit-scrollbar {
   display: none; /* Chrome, Safari, Opera */
 }
-/* Add this in your global CSS file (e.g., index.css or App.css) */
+
 .epr-category-nav {
   display: flex !important;
   overflow-x: auto !important;
@@ -23,7 +27,303 @@
   background-color: #ccc;
   border-radius: 3px;
 }
-.gradient{
+
+.gradient {
   background-color: #EFE7F6;
- box-shadow: 0 -23px 25px 0 rgba(191, 162, 225, 0.17) inset, 0 -36px 30px 0 rgba(204, 180, 227, 0.15) inset, 0 -79px 40px 0 rgba(204, 180, 227, 0.10) inset, 0 2px 1px 0 rgba(204, 180, 227, 0.06), 0 4px 2px 0 rgba(204, 180, 227, 0.09), 0 8px 4px 0 rgba(204, 180, 227, 0.09), 0 16px 8px 0 rgba(204, 180, 227, 0.09), 0 32px 16px 0 rgba(204, 180, 227, 0.09);
+  box-shadow: 0 -23px 25px 0 rgba(191, 162, 225, 0.17) inset, 0 -36px 30px 0 rgba(204, 180, 227, 0.15) inset, 0 -79px 40px 0 rgba(204, 180, 227, 0.10) inset, 0 2px 1px 0 rgba(204, 180, 227, 0.06), 0 4px 2px 0 rgba(204, 180, 227, 0.09), 0 8px 4px 0 rgba(204, 180, 227, 0.09), 0 16px 8px 0 rgba(204, 180, 227, 0.09), 0 32px 16px 0 rgba(204, 180, 227, 0.09);
 }
+
+/* ========================================================
+   TAILWIND v4 @theme CONFIGURATION
+   Exact palette + Derived tints, fonts, shadows, and tokens
+   ======================================================== */
+@theme {
+  /* Exact Core Palette */
+  --color-brand-purple: #5C0EA4;
+  --color-brand-deep: #450B7B;
+  --color-brand-dark: #1B0837;
+  --color-brand-dark-alt: #240A44;
+  --color-brand-blue: #5E9BFF;
+  --color-brand-lavender: #EFE7F6;
+  --color-brand-canvas: #F9F6FC;
+  --color-brand-text: #0B0E13;
+  --color-brand-muted: #707070;
+  --color-brand-success: #34C759;
+
+  /* Derived Purple Tints (50-950) */
+  --color-purple-50: #FAF5FF;
+  --color-purple-100: #F3E8FF;
+  --color-purple-200: #E9D5FF;
+  --color-purple-300: #D8B4FE;
+  --color-purple-400: #C084FC;
+  --color-purple-500: #9835D4;
+  --color-purple-600: #5C0EA4;
+  --color-purple-700: #450B7B;
+  --color-purple-800: #35085E;
+  --color-purple-900: #260542;
+  --color-purple-950: #170228;
+
+  /* Fonts */
+  --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-body: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Derived Glow Shadows */
+  --shadow-glow: 0 0 40px -10px rgba(92, 14, 164, 0.25);
+  --shadow-glow-lg: 0 20px 50px -15px rgba(92, 14, 164, 0.35);
+  --shadow-glow-blue: 0 0 35px -5px rgba(94, 155, 255, 0.3);
+  --shadow-glass: 0 10px 30px -8px rgba(92, 14, 164, 0.08), 0 2px 8px -2px rgba(0, 0, 0, 0.04);
+}
+
+/* ========================================================
+   CSS ROOT VARIABLES
+   ======================================================== */
+:root {
+  --vow-purple: #5C0EA4;
+  --vow-deep-purple: #450B7B;
+  --vow-dark: #1B0837;
+  --vow-dark-alt: #240A44;
+  --vow-blue: #5E9BFF;
+  --vow-lavender: #EFE7F6;
+  --vow-canvas: #F9F6FC;
+  --vow-text: #0B0E13;
+  --vow-muted: #707070;
+  --vow-success: #34C759;
+  --vow-border-lavender: rgba(204, 180, 233, 0.35);
+  --vow-glow-shadow: 0 0 40px -10px rgba(92, 14, 164, 0.25);
+}
+
+/* ========================================================
+   TYPOGRAPHY UTILITIES: PLUS JAKARTA SANS HEADLINES & CLAMPS
+   ======================================================== */
+
+.font-display {
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.font-body {
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Fluid Headline Clamps with tight tracking (-0.03em) */
+.vow-headline-hero {
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: clamp(2.5rem, 5.5vw + 0.5rem, 4.75rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-weight: 800;
+}
+
+.vow-headline-section {
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: clamp(1.85rem, 3.2vw + 0.5rem, 3rem);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+
+.vow-headline-card {
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: clamp(1.2rem, 1.5vw + 0.5rem, 1.5rem);
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+/* Small uppercase purple eyebrow labels */
+.vow-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #5C0EA4;
+  padding: 0.35rem 0.85rem;
+  border-radius: 9999px;
+  background-color: #EFE7F6;
+  border: 1px solid rgba(204, 180, 233, 0.45);
+}
+
+.vow-eyebrow-dark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #5E9BFF;
+  padding: 0.35rem 0.85rem;
+  border-radius: 9999px;
+  background: rgba(94, 155, 255, 0.12);
+  border: 1px solid rgba(94, 155, 255, 0.3);
+}
+
+/* ========================================================
+   DERIVED BORDERS, GRADIENTS & SHADOWS
+   ======================================================== */
+
+.vow-border-lavender {
+  border: 1px solid rgba(204, 180, 233, 0.35);
+}
+
+.vow-border-dark {
+  border: 1px solid rgba(204, 180, 233, 0.16);
+}
+
+.vow-gradient-soft {
+  background: linear-gradient(135deg, rgba(92, 14, 164, 0.08) 0%, rgba(94, 155, 255, 0.08) 100%);
+}
+
+.vow-gradient-pill {
+  background: linear-gradient(135deg, #5C0EA4 0%, #5E9BFF 100%);
+}
+
+.vow-gradient-dark-section {
+  background: linear-gradient(180deg, #1B0837 0%, #240A44 100%);
+}
+
+.vow-shadow-glow {
+  box-shadow: 0 0 40px -10px rgba(92, 14, 164, 0.25);
+}
+
+.vow-shadow-glow-blue {
+  box-shadow: 0 0 35px -5px rgba(94, 155, 255, 0.3);
+}
+
+/* ========================================================
+   ROUNDED-3XL GLASS CARDS & SURFACES
+   ======================================================== */
+
+/* Light mode rounded-3xl glass card */
+.vow-card-glass {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(204, 180, 233, 0.35);
+  border-radius: 1.5rem; /* rounded-3xl */
+  box-shadow: 0 10px 30px -8px rgba(92, 14, 164, 0.08), 0 2px 8px -2px rgba(0, 0, 0, 0.04);
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.vow-card-glass:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 22px 45px -12px rgba(92, 14, 164, 0.18), 0 0 0 1px rgba(92, 14, 164, 0.2);
+  border-color: rgba(92, 14, 164, 0.35);
+}
+
+/* Deep dark section rounded-3xl card */
+.vow-card-dark {
+  background: rgba(27, 8, 55, 0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(204, 180, 233, 0.18);
+  border-radius: 1.5rem; /* rounded-3xl */
+  box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.5);
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.vow-card-dark:hover {
+  transform: translateY(-4px);
+  border-color: rgba(94, 155, 255, 0.45);
+  box-shadow: 0 25px 60px -10px rgba(0, 0, 0, 0.7), 0 0 30px rgba(94, 155, 255, 0.18);
+}
+
+/* Subtle background noise texture */
+.vow-noise-overlay {
+  background-image: radial-gradient(rgba(92, 14, 164, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.vow-noise-overlay-dark {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ========================================================
+   INTERACTIVE ANIMATIONS FOR HERO FLOOR PLAN & AVATARS
+   ======================================================== */
+
+@keyframes proximity-pulse {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.95;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1.85);
+    opacity: 0;
+  }
+}
+
+@keyframes slow-avatar-wander {
+  0% {
+    transform: translate(0px, 0px);
+  }
+  25% {
+    transform: translate(32px, -20px);
+  }
+  50% {
+    transform: translate(60px, 10px);
+  }
+  75% {
+    transform: translate(25px, 26px);
+  }
+  100% {
+    transform: translate(0px, 0px);
+  }
+}
+
+@keyframes slow-avatar-approach {
+  0% {
+    transform: translate(0px, 0px);
+  }
+  35% {
+    transform: translate(-36px, -12px);
+  }
+  65% {
+    transform: translate(-36px, -12px);
+  }
+  100% {
+    transform: translate(0px, 0px);
+  }
+}
+
+@keyframes gentle-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.vow-pulse-ring {
+  animation: proximity-pulse 2.2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+.vow-avatar-walk-1 {
+  animation: slow-avatar-wander 14s ease-in-out infinite;
+}
+
+.vow-avatar-walk-2 {
+  animation: slow-avatar-approach 10s ease-in-out infinite;
+}
+
+.vow-float {
+  animation: gentle-float 4s ease-in-out infinite;
+}
+
+.vow-float-delayed {
+  animation: gentle-float 4.5s ease-in-out 1.2s infinite;
+}
+

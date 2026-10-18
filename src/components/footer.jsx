@@ -1,46 +1,59 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import logo from "../assets/logo.png";
 import { Link } from "react-router-dom";
+import { useLenis } from "./landing/SmoothScroll";
+import { Reveal } from "./landing/Reveal";
+import { Send } from "lucide-react";
+import gsap from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
 
-const Footer = () => {
+gsap.registerPlugin(ScrollTrigger);
+
+export const Footer = ({ onWatchDemo }) => {
+  const footerRef = useRef(null);
+  const wordmarkRef = useRef(null);
   const [mouse, setMouse] = useState({ x: 0, y: 0 });
   const [hovered, setHovered] = useState(false);
   const [glowPos, setGlowPos] = useState({ x: 0, y: 0 });
   const animationFrameRef = useRef(null);
   const lastMouseMoveRef = useRef(0);
+  const lenis = useLenis();
 
-  // Smooth scroll navigation function
+  // Smooth scroll navigation function with Lenis integration
   const handleNavigation = (targetId) => {
+    if (targetId === "home") {
+      if (lenis) lenis.scrollTo(0, { duration: 1.2 });
+      else window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     const element = document.getElementById(targetId);
-    if (element) {
-      element.scrollIntoView({ 
-        behavior: 'smooth',
-        block: 'start'
-      });
+    if (lenis && element) {
+      lenis.scrollTo(element, { offset: -80, duration: 1.2 });
+    } else if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   };
 
-  // Email submission handler
+  // Email submission handler (mailto)
   const handleEmailSubmit = (e) => {
     e.preventDefault();
     const email = e.target.email.value;
-    
-    // Create mailto link
-    const subject = encodeURIComponent('VOW Newsletter Subscription');
-    const body = encodeURIComponent(`Hello,\n\nI would like to subscribe to VOW updates with this email: ${email}\n\nThank you!`);
+
+    const subject = encodeURIComponent("VOW Newsletter Subscription");
+    const body = encodeURIComponent(
+      `Hello,\n\nI would like to subscribe to VOW updates with this email: ${email}\n\nThank you!`
+    );
     const mailtoLink = `mailto:vow.org8000@gmail.com?subject=${subject}&body=${body}`;
-    
-    // Open email client
+
     window.location.href = mailtoLink;
-    
-    // Reset form
     e.target.reset();
   };
 
   // Throttled mouse move handler
   const handleMouseMove = useCallback((e) => {
     const now = Date.now();
-    if (now - lastMouseMoveRef.current < 16) return; // ~60fps throttle
+    if (now - lastMouseMoveRef.current < 16) return;
     lastMouseMoveRef.current = now;
 
     const rect = e.currentTarget.getBoundingClientRect();
@@ -50,17 +63,7 @@ const Footer = () => {
     });
   }, []);
 
-  const handleTouchMove = useCallback((e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const touch = e.touches[0];
-    setMouse({
-      x: touch.clientX - rect.left,
-      y: touch.clientY - rect.top,
-    });
-    setHovered(true);
-  }, []);
-
-  // Optimized animation loop
+  // Smooth lerp glow
   useEffect(() => {
     if (!hovered) {
       if (animationFrameRef.current) {
@@ -80,7 +83,7 @@ const Footer = () => {
     };
 
     animationFrameRef.current = requestAnimationFrame(animate);
-    
+
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
@@ -88,155 +91,181 @@ const Footer = () => {
     };
   }, [hovered, mouse]);
 
-  // Generate grid cells once (memoized)
-  const gridCells = useRef(
-    Array.from({ length: 500 }, (_, i) => ({ id: i }))
-  ).current;
+  // Wordmark slide-up scrub animation
+  useGSAP(
+    () => {
+      const prefersReduced =
+        typeof window !== 'undefined' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      if (prefersReduced || !wordmarkRef.current || !footerRef.current) return;
+
+      gsap.fromTo(
+        wordmarkRef.current,
+        { yPercent: 45, opacity: 0.05 },
+        {
+          yPercent: 28,
+          opacity: 0.16,
+          ease: 'power1.out',
+          scrollTrigger: {
+            trigger: footerRef.current,
+            start: 'top 85%',
+            end: 'bottom bottom',
+            scrub: 1.2,
+          },
+        }
+      );
+    },
+    { scope: footerRef }
+  );
 
   return (
     <footer
-      className="relative text-[#EFEFEF] bg-gradient-to-b from-[#1B0837] to-[#240A44] px-4 sm:px-6 md:px-8 lg:px-[60px] py-8 sm:py-10 md:py-12 lg:py-[60px] overflow-hidden"
+      ref={footerRef}
+      className="relative text-[#EFEFEF] bg-gradient-to-b from-[#1B0837] via-[#16062d] to-[#0e041d] px-4 sm:px-6 md:px-12 lg:px-20 pt-8 sm:pt-12 pb-0 overflow-hidden border-none"
       onMouseMove={handleMouseMove}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onTouchMove={handleTouchMove}
-      onTouchStart={() => setHovered(true)}
-      onTouchEnd={() => setHovered(false)}
     >
-      {/* Grid Effect */}
+      {/* Background Interactive Ambient Glow */}
       {hovered && (
         <div
-          className="absolute inset-0 pointer-events-none transition-opacity duration-300"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 transition-opacity duration-300"
           style={{
-            opacity: 1,
-            maskImage: `radial-gradient(circle 180px at ${glowPos.x}px ${glowPos.y}px, white 30%, transparent 90%)`,
-            WebkitMaskImage: `radial-gradient(circle 180px at ${glowPos.x}px ${glowPos.y}px, white 30%, transparent 90%)`,
+            background: `radial-gradient(circle 280px at ${glowPos.x}px ${glowPos.y}px, rgba(94, 155, 255, 0.08), transparent 80%)`,
           }}
-        >
-          {/* Optimized Grid */}
-          <div
-            className="absolute inset-0 grid pointer-events-none"
-            style={{
-              gridTemplateColumns: 'repeat(25, 50px)',
-              gridTemplateRows: 'repeat(20, 50px)',
-              width: '100%',
-              height: '100%',
-            }}
-          >
-            {gridCells.map((cell) => (
-              <div
-                key={cell.id}
-                className="border-[0.5px] border-white/[0.06]"
-                style={{
-                  filter: 'blur(0.5px)',
-                  transform: 'translate3d(0, 0, 0)',
-                }}
-              />
-            ))}
-          </div>
-        </div>
+        />
       )}
 
-      {/* Footer Content */}
-      <div className="max-w-[1160px] mx-auto flex flex-col items-center lg:flex-row lg:justify-center lg:items-start gap-8 sm:gap-10 md:gap-12 lg:gap-[164px] relative z-10">
-        {/* Intro */}
-        <section className="w-full max-w-[375px] space-y-4 text-center lg:text-left">
-          <div className="flex flex-row items-center justify-center lg:justify-start gap-2 sm:gap-2.5 lg:gap-3 mb-6 sm:mb-8 lg:mb-[59px]">
-            <img
-              src={logo}
-              alt="VOW logo"
-              className="h-[40px] w-[49px] sm:h-[48px] sm:w-[59px] lg:h-[55.574px] lg:w-[68.122px] object-contain select-none"
-            />
-            <div className="leading-none text-left">
-              <h3 className="text-[24px] sm:text-[28px] lg:text-[32px] font-bold text-[#FEFEFE] mb-0.5">
-                VOW
-              </h3>
-              <p className="text-[16px] sm:text-[20px] lg:text-[24px] font-normal text-[#FEFEFE]">
-                Virtual Organised World
-              </p>
+      {/* Footer Main Content with Reveal Fade-Up */}
+      <Reveal y={24} className="max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-10 lg:gap-16 relative z-10">
+          {/* Column 1: Brand Info & CTA */}
+          <div className="md:col-span-5 flex flex-col items-start space-y-4 text-left">
+            <div className="flex items-center gap-3 mb-2">
+              <img
+                src={logo}
+                alt="VOW Logo"
+                className="h-10 w-auto object-contain select-none"
+              />
+              <div>
+                <h3 className="font-display text-2xl font-bold text-white tracking-tight leading-none">
+                  VOW
+                </h3>
+                <p className="text-sm font-medium text-[#CCB4E9]">
+                  Virtual Organised World
+                </p>
+              </div>
+            </div>
+
+            <p className="text-[#969696] text-sm sm:text-base leading-relaxed max-w-sm font-body">
+              Experience the most natural way to collaborate remotely.
+            </p>
+
+            <div className="flex flex-wrap gap-3 pt-2">
+              <Link
+                to="/signup"
+                className="px-5 py-2.5 min-h-[44px] flex items-center justify-center rounded-xl text-sm font-medium bg-[#5E9BFF] text-[#0B0E13] hover:brightness-110 active:scale-98 transition shadow-sm focus-visible:ring-2 focus-visible:ring-[#5E9BFF] focus-visible:outline-none"
+              >
+                Get Started
+              </Link>
+
+              <button
+                onClick={() => {
+                  if (onWatchDemo) onWatchDemo();
+                  else handleNavigation("demo");
+                }}
+                className="px-5 py-2.5 min-h-[44px] flex items-center justify-center rounded-xl text-sm font-medium border border-white/20 text-white hover:bg-white/10 transition cursor-pointer focus-visible:ring-2 focus-visible:ring-[#5E9BFF] focus-visible:outline-none"
+              >
+                Watch Demo
+              </button>
             </div>
           </div>
 
-          <p className="text-[#969696] text-[14px] sm:text-[16px] leading-[20px] sm:leading-[24px] pb-6 sm:pb-8 lg:pb-[59px] px-4 lg:px-0">
-            Experience the most natural way to collaborate remotely.
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-2 sm:gap-[8px] items-center justify-center lg:justify-start px-4 lg:px-0">
-            <Link
-              to="/signup"
-              className="w-full sm:w-[160px] lg:w-[183px] h-[39px] flex items-center justify-center rounded-[8px] text-[14px] sm:text-[16px] font-normal bg-[#5E9BFF] text-[#FEFEFE] border border-[#EFEFEF] hover:brightness-105 transition"
-            >
-              Get Started
-            </Link>
-            <button
-              onClick={() => handleNavigation('demo-video')}
-              className="w-full sm:w-[160px] lg:w-[183px] h-[39px] flex items-center justify-center rounded-[8px] text-[14px] sm:text-[16px] font-normal border border-[#EFEFEF] text-[#EDEBFF] hover:bg-white/5 transition cursor-pointer"
-            >
-              Watch Demo
-            </button>
+          {/* Column 2: Quick Links */}
+          <div className="md:col-span-3 text-left">
+            <h4 className="font-display text-lg font-bold text-white mb-5 tracking-tight">
+              Quick Links
+            </h4>
+            <ul className="space-y-1 list-none p-0 m-0 text-sm font-body">
+              {[
+                { name: "Home", target: "home" },
+                { name: "Features", target: "features" },
+                { name: "How It Works", target: "how-it-works" },
+                { name: "Roles", target: "roles" },
+                { name: "Showcase", target: "demo" },
+                { name: "FAQ", target: "faq" },
+                { name: "Contact Us", target: "subscribe" },
+              ].map((link, idx) => (
+                <li key={idx}>
+                  <button
+                    onClick={() => handleNavigation(link.target)}
+                    className="text-[#969696] hover:text-[#5E9BFF] transition-colors cursor-pointer bg-transparent border-none py-1.5 px-1 min-h-[44px] flex items-center focus-visible:ring-2 focus-visible:ring-[#5E9BFF] focus-visible:outline-none rounded"
+                  >
+                    {link.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
-        </section>
 
-        {/* Quick Links */}
-        <nav
-          className="w-full max-w-[300px] space-y-4 text-center"
-          aria-label="Quick Links"
-        >
-          <h4 className="text-white font-semibold text-[20px] sm:text-[22px] lg:text-[24px] leading-[1.2] mb-6 sm:mb-8 lg:mb-[42px]">
-            Quick Links
-          </h4>
-          <ul className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-1 gap-3 sm:gap-4 lg:gap-[16px] list-none p-0 m-0">
-            {[
-              { name: "Home", target: "home" },
-              { name: "Features", target: "features" },
-              { name: "Demo video", target: "demo-video" },
-              { name: "User roles", target: "user-roles" },
-              { name: "Contact Us", target: "subscribe" }
-            ].map((link, idx) => (
-              <li key={idx}>
-                <button
-                  onClick={() => handleNavigation(link.target)}
-                  className="text-white text-[16px] sm:text-[18px] lg:text-[20px] leading-[1.2] hover:text-[#5E9BFF] transition cursor-pointer bg-transparent border-none p-0"
-                >
-                  {link.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
-        {/* Subscribe */}
-        <section id="subscribe" className="w-full max-w-[375px] space-y-4 text-center lg:text-left px-4 lg:px-0">
-          <h4 className="text-white font-semibold text-[20px] sm:text-[22px] lg:text-[24px] leading-[1.2] mb-6 sm:mb-8 lg:mb-[42px]">
-            Subscribe
-          </h4>
-          <p className="text-[#969696] text-[14px] sm:text-[16px] mb-6 sm:mb-8 lg:mb-[42px]">
-            If you would like to receive daily updates, please write your email.
-          </p>
-
-          <form onSubmit={handleEmailSubmit} className="flex flex-col w-full gap-2 sm:gap-[8px]">
-            <input
-              name="email"
-              type="email"
-              required
-              placeholder="Enter your email"
-              aria-label="Email address"
-              className="w-full text-center h-[39px] px-4 sm:px-6 lg:px-[36px] rounded-[8px] bg-transparent border border-[#EFEFEF] text-[14px] sm:text-[16px] text-[#EFEFEF] placeholder:text-[#EDEBFF]/70 outline-none focus:border-[#5E9BFF] transition"
-            />
-            <button
-              type="submit"
-              className="w-full px-4 sm:px-6 lg:px-[36px] py-[10px] h-[39px] rounded-[8px] text-[14px] sm:text-[16px] font-semibold bg-[#5E9BFF] text-[#0B0B15] border border-[#EFEFEF] hover:brightness-105 transition"
-            >
+          {/* Column 3: Newsletter Subscribe */}
+          <div id="subscribe" className="md:col-span-4 text-left">
+            <h4 className="font-display text-lg font-bold text-white mb-2 tracking-tight">
               Subscribe
-            </button>
-          </form>
-        </section>
-      </div>
+            </h4>
+            <p className="text-[#969696] text-sm mb-5 font-body leading-relaxed">
+              If you would like to receive daily updates, please write your email.
+            </p>
 
-      {/* Copyright */}
-      <div className="max-w-[1160px] mx-auto mt-8 sm:mt-10 md:mt-12 lg:mt-[48px] pt-8 sm:pt-10 md:pt-12 lg:pt-[60px] text-center text-[#969696] text-[12px] sm:text-[14px] lg:text-[16px] leading-[1.2] relative z-10 px-4">
-        <p>© 2025 VOW. All rights reserved.</p>
-        <p className="mt-1">Virtual Organised World - Where Remote Teams Connect.</p>
+            <form onSubmit={handleEmailSubmit} className="space-y-3">
+              <div className="relative">
+                <input
+                  name="email"
+                  type="email"
+                  required
+                  placeholder="Enter your email"
+                  aria-label="Email address"
+                  className="w-full h-11 min-h-[44px] px-4 rounded-xl bg-white/5 border border-white/15 text-sm text-white placeholder:text-gray-500 outline-none focus:border-[#5E9BFF] focus-visible:ring-2 focus-visible:ring-[#5E9BFF] transition"
+                />
+              </div>
+              <button
+                type="submit"
+                className="w-full h-11 min-h-[44px] px-6 rounded-xl text-sm font-semibold bg-gradient-to-r from-[#5C0EA4] to-[#5E9BFF] text-white hover:brightness-110 active:scale-98 transition shadow-md flex items-center justify-center gap-2 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#5E9BFF] focus-visible:outline-none"
+              >
+                <span>Subscribe</span>
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* Bottom Bar: Copyright & Terms */}
+        <div className="max-w-7xl mx-auto mt-16 pt-8 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between text-xs text-[#969696] gap-4 relative z-10">
+          <p>© 2026 VOW. All rights reserved.</p>
+          <p>Virtual Organised World - Where Remote Teams Connect.</p>
+          <div>
+            <Link
+              to="/terms"
+              className="text-gray-400 hover:text-white transition-colors underline underline-offset-4 py-2 px-1 min-h-[44px] inline-flex items-center focus-visible:ring-2 focus-visible:ring-[#5E9BFF] focus-visible:outline-none rounded"
+            >
+              Terms & Conditions
+            </Link>
+          </div>
+        </div>
+      </Reveal>
+
+      {/* Huge Bleeding VOW Wordmark at Footer Bottom */}
+      <div
+        ref={wordmarkRef}
+        aria-hidden="true"
+        className="pointer-events-none select-none w-full text-center overflow-hidden z-0 mt-4 sm:mt-6"
+        style={{ transform: 'translateY(28%)' }}
+      >
+        <span className="block font-display font-black text-[22vw] leading-[0.72] tracking-tighter bg-gradient-to-r from-[#5C0EA4] via-[#5E9BFF] to-[#CCB4E9] bg-clip-text text-transparent opacity-20">
+          VOW
+        </span>
       </div>
     </footer>
   );
